@@ -2,6 +2,7 @@
 #define APPLICATION_H
 
 #include "Display.h"
+#include "Encoder.h"
 
 class Application
 {
@@ -13,6 +14,7 @@ public:
 
 private:
     Display display;
+    Encoder encoder;
     unsigned long lastHeartbeat;
 };
 

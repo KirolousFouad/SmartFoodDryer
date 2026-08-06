@@ -2,20 +2,22 @@
 #include "Application.h"
 
 Application::Application()
+    : encoder(2,3,4)
 {
     lastHeartbeat = 0;
 }
 
 void Application::begin()
 {
-    Serial.begin(115200);
     display.begin();
+    encoder.begin();
     display.center(0, "Smart Dryer");
     display.center(1, "Firmware v0.2");
     delay(3000);
     display.clear();
     display.center(0,"System");
     display.center(1,"Ready");
+    Serial.begin(115200);
     while (!Serial)
     {
         // Wait for Serial on supported boards
@@ -30,10 +32,29 @@ void Application::begin()
 
 void Application::update()
 {
-    if (millis() - lastHeartbeat >= 1000)
-    {
-        lastHeartbeat = millis();
+    encoder.update();
 
-        Serial.println("Application Running...");
+    EncoderEvent event = encoder.getEvent();
+
+    switch (event)
+    {
+    case ENCODER_LEFT:
+        Serial.println("LEFT");
+        break;
+
+    case ENCODER_RIGHT:
+        Serial.println("RIGHT");
+        break;
+
+    case ENCODER_CLICK:
+        Serial.println("CLICK");
+        break;
+
+    case ENCODER_LONG_CLICK:
+        Serial.println("LONG CLICK");
+        break;
+
+    default:
+        break;
     }
 }
