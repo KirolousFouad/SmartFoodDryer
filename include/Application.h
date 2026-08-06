@@ -4,6 +4,7 @@
 #include "Display.h"
 #include "Encoder.h"
 #include "Menu.h"
+#include "MenuManager.h"
 
 class Application
 {
@@ -16,7 +17,7 @@ public:
 private:
     Display display;
     Encoder encoder;
-    Menu mainMenu;
+    MenuManager menuManager;
     
     unsigned long lastHeartbeat;
 };

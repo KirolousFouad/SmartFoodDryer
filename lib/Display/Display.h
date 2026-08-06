@@ -21,7 +21,8 @@ public:
     void center(uint8_t row,
                 const char* text);
     void drawMenu(const char* title, const char* selectedItem);
-
+    void drawTitle(const char* title);
+    void drawSelectedItem(const char* item);
 private:
 
     LiquidCrystal_I2C lcd;

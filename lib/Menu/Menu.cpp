@@ -12,36 +12,48 @@ void Menu::setTitle(const char* title)
     menuTitle = title;
 }
 
-bool Menu::addItem(const char* item)
+bool Menu::addItem(
+    const char* text,
+    MenuAction action,
+    uint8_t parameter)
 {
-    if(itemCount >= MAX_MENU_ITEMS)
+    if (itemCount >= MAX_MENU_ITEMS)
         return false;
 
-    items[itemCount++] = item;
+    items[itemCount].text = text;
+    items[itemCount].action = action;
+    items[itemCount].parameter = parameter;
+
+    itemCount++;
 
     return true;
 }
 
 void Menu::next()
 {
-    if(itemCount == 0)
+    if (itemCount == 0)
         return;
 
     selectedIndex++;
 
-    if(selectedIndex >= itemCount)
+    if (selectedIndex >= itemCount)
         selectedIndex = 0;
 }
 
 void Menu::previous()
 {
-    if(itemCount == 0)
+    if (itemCount == 0)
         return;
 
-    if(selectedIndex == 0)
+    if (selectedIndex == 0)
         selectedIndex = itemCount - 1;
     else
         selectedIndex--;
+}
+
+void Menu::resetSelection()
+{
+    selectedIndex = 0;
 }
 
 uint8_t Menu::getSelectedIndex() const
@@ -56,10 +68,26 @@ const char* Menu::getTitle() const
 
 const char* Menu::getItem(uint8_t index) const
 {
-    if(index >= itemCount)
+    if (index >= itemCount)
         return "";
 
-    return items[index];
+    return items[index].text;
+}
+
+MenuAction Menu::getSelectedAction() const
+{
+    if (itemCount == 0)
+        return ACTION_NONE;
+
+    return items[selectedIndex].action;
+}
+
+uint8_t Menu::getSelectedParameter() const
+{
+    if (itemCount == 0)
+        return 0;
+
+    return items[selectedIndex].parameter;
 }
 
 uint8_t Menu::getItemCount() const

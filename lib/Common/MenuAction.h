@@ -1,0 +1,21 @@
+#ifndef MENU_ACTION_H
+#define MENU_ACTION_H
+
+enum MenuAction
+{
+    ACTION_NONE = 0,
+
+    ACTION_OPEN_RECIPES,
+
+    ACTION_OPEN_MANUAL,
+
+    ACTION_OPEN_SETTINGS,
+
+    ACTION_OPEN_ABOUT,
+
+    ACTION_START_RECIPE,
+
+    ACTION_BACK
+};
+
+#endif

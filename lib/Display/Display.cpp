@@ -41,12 +41,30 @@ void Display::center(uint8_t row,
 }
 void Display::drawMenu(const char* title, const char* selectedItem)
 {
-    lcd.clear();
+    drawTitle(title);
+    drawSelectedItem(selectedItem);
+}
+void Display::drawTitle(const char* title)
+{
+    lcd.setCursor(0,0);
 
-    lcd.setCursor(0, 0);
+    lcd.print("                ");   // Clear row
+
+    lcd.setCursor(0,0);
+
     lcd.print(title);
+}
+void Display::drawSelectedItem(const char* item)
+{
+    lcd.setCursor(0,1);
 
-    lcd.setCursor(0, 1);
-    lcd.print("> ");
-    lcd.print(selectedItem);
+    lcd.print("                ");   // Clear row
+
+    lcd.setCursor(0,1);
+
+    lcd.write('>');
+
+    lcd.print(' ');
+
+    lcd.print(item);
 }
