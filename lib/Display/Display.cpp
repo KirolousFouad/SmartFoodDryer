@@ -39,3 +39,14 @@ void Display::center(uint8_t row,
     lcd.setCursor(col, row);
     lcd.print(text);
 }
+void Display::drawMenu(const char* title, const char* selectedItem)
+{
+    lcd.clear();
+
+    lcd.setCursor(0, 0);
+    lcd.print(title);
+
+    lcd.setCursor(0, 1);
+    lcd.print("> ");
+    lcd.print(selectedItem);
+}

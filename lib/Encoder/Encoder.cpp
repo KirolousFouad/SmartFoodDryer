@@ -29,12 +29,13 @@ void Encoder::update()
 
     bool currentCLK = digitalRead(clkPin);
 
-    if (currentCLK != lastCLK)
+    // Detect only the falling edge of CLK
+    if (lastCLK == HIGH && currentCLK == LOW)
     {
-        if (digitalRead(dtPin) != currentCLK)
-            event = ENCODER_RIGHT;
-        else
+        if (digitalRead(dtPin) == HIGH)
             event = ENCODER_LEFT;
+        else
+            event = ENCODER_RIGHT;
     }
 
     lastCLK = currentCLK;

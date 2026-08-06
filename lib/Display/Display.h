@@ -20,6 +20,7 @@ public:
 
     void center(uint8_t row,
                 const char* text);
+    void drawMenu(const char* title, const char* selectedItem);
 
 private:
 

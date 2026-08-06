@@ -1,57 +1,68 @@
-/*
--------------------------------------------------------
-Smart Food Dryer Firmware
-Version : 2.1.0
-Module  : Menu
--------------------------------------------------------
-*/
-
 #include "Menu.h"
 
 Menu::Menu()
 {
-    title = "";
-
-    count = 0;
+    menuTitle = "";
+    itemCount = 0;
+    selectedIndex = 0;
 }
 
-void Menu::setTitle(const char* text)
+void Menu::setTitle(const char* title)
 {
-    title = text;
+    menuTitle = title;
 }
 
-const char* Menu::getTitle() const
+bool Menu::addItem(const char* item)
 {
-    return title;
-}
-
-bool Menu::addItem(const char* text,
-                   Action action,
-                   MenuID next,
-                   uint8_t value)
-{
-    if(count >= MAX_ITEMS)
+    if(itemCount >= MAX_MENU_ITEMS)
         return false;
 
-    items[count].text = text;
-
-    items[count].action = action;
-
-    items[count].nextMenu = next;
-
-    items[count].value = value;
-
-    count++;
+    items[itemCount++] = item;
 
     return true;
 }
 
-uint8_t Menu::size() const
+void Menu::next()
 {
-    return count;
+    if(itemCount == 0)
+        return;
+
+    selectedIndex++;
+
+    if(selectedIndex >= itemCount)
+        selectedIndex = 0;
 }
 
-const MenuItem& Menu::get(uint8_t index) const
+void Menu::previous()
 {
+    if(itemCount == 0)
+        return;
+
+    if(selectedIndex == 0)
+        selectedIndex = itemCount - 1;
+    else
+        selectedIndex--;
+}
+
+uint8_t Menu::getSelectedIndex() const
+{
+    return selectedIndex;
+}
+
+const char* Menu::getTitle() const
+{
+    return menuTitle;
+}
+
+const char* Menu::getItem(uint8_t index) const
+{
+    if(index >= itemCount)
+        return "";
+
     return items[index];
+}
+
+uint8_t Menu::getItemCount() const
+{
+    return itemCount;
 }

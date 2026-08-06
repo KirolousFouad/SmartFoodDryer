@@ -17,6 +17,15 @@ void Application::begin()
     display.clear();
     display.center(0,"System");
     display.center(1,"Ready");
+
+    mainMenu.setTitle("Food Dryer");
+    mainMenu.addItem("Auto");
+    mainMenu.addItem("Manual");
+
+    display.drawMenu(
+    mainMenu.getTitle(),
+    mainMenu.getItem(mainMenu.getSelectedIndex()));
+
     Serial.begin(115200);
     while (!Serial)
     {
@@ -36,25 +45,28 @@ void Application::update()
 
     EncoderEvent event = encoder.getEvent();
 
-    switch (event)
+    switch(event)
     {
-    case ENCODER_LEFT:
-        Serial.println("LEFT");
+        case ENCODER_LEFT:
+
+            mainMenu.previous();
+            display.drawMenu(
+                mainMenu.getTitle(),
+                mainMenu.getItem(mainMenu.getSelectedIndex())
+            );
         break;
 
-    case ENCODER_RIGHT:
-        Serial.println("RIGHT");
+        case ENCODER_RIGHT:
+
+            mainMenu.next();
+            display.drawMenu(
+            mainMenu.getTitle(),
+            mainMenu.getItem(mainMenu.getSelectedIndex())
+        );
+
         break;
 
-    case ENCODER_CLICK:
-        Serial.println("CLICK");
-        break;
-
-    case ENCODER_LONG_CLICK:
-        Serial.println("LONG CLICK");
-        break;
-
-    default:
+        default:
         break;
     }
 }

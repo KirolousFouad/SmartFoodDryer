@@ -3,6 +3,7 @@
 
 #include "Display.h"
 #include "Encoder.h"
+#include "Menu.h"
 
 class Application
 {
@@ -15,6 +16,8 @@ public:
 private:
     Display display;
     Encoder encoder;
+    Menu mainMenu;
+    
     unsigned long lastHeartbeat;
 };
 

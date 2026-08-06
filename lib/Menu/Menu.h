@@ -1,57 +1,41 @@
-/*
--------------------------------------------------------
-Smart Food Dryer Firmware
-Version : 2.1.0
-Module  : Menu
--------------------------------------------------------
-*/
-
 #ifndef MENU_H
 #define MENU_H
 
 #include <Arduino.h>
-#include "States.h"
 
-#define MAX_ITEMS 10
-
-struct MenuItem
-{
-    const char* text;
-
-    Action action;
-
-    uint8_t value;
-
-    MenuID nextMenu;
-};
+#define MAX_MENU_ITEMS 10
 
 class Menu
 {
-private:
-
-    const char* title;
-
-    MenuItem items[MAX_ITEMS];
-
-    uint8_t count;
-
 public:
 
     Menu();
 
-    void setTitle(const char* text);
+    void setTitle(const char* title);
+
+    bool addItem(const char* item);
+
+    void next();
+
+    void previous();
+
+    uint8_t getSelectedIndex() const;
 
     const char* getTitle() const;
 
-    bool addItem(const char* text,
-                 Action action,
-                 MenuID next,
-                 uint8_t value = 0);
+    const char* getItem(uint8_t index) const;
 
-    uint8_t size() const;
+    uint8_t getItemCount() const;
 
-    const MenuItem& get(uint8_t index) const;
+private:
 
+    const char* menuTitle;
+
+    const char* items[MAX_MENU_ITEMS];
+
+    uint8_t itemCount;
+
+    uint8_t selectedIndex;
 };
 
 #endif
