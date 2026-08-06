@@ -9,7 +9,13 @@ Application::Application()
 void Application::begin()
 {
     Serial.begin(115200);
-
+    display.begin();
+    display.center(0, "Smart Dryer");
+    display.center(1, "Firmware v0.2");
+    delay(3000);
+    display.clear();
+    display.center(0,"System");
+    display.center(1,"Ready");
     while (!Serial)
     {
         // Wait for Serial on supported boards

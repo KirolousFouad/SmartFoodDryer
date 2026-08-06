@@ -1,6 +1,8 @@
 #ifndef APPLICATION_H
 #define APPLICATION_H
 
+#include "Display.h"
+
 class Application
 {
 public:
@@ -10,6 +12,7 @@ public:
     void update();
 
 private:
+    Display display;
     unsigned long lastHeartbeat;
 };
 

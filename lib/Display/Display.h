@@ -6,31 +6,24 @@
 
 class Display
 {
-private:
-    LiquidCrystal_I2C* lcd;
-
 public:
-    Display(LiquidCrystal_I2C* display);
+
+    Display();
 
     void begin();
 
     void clear();
 
-    void showMainMenu(byte selected);
+    void print(uint8_t col,
+               uint8_t row,
+               const char* text);
 
-    void showAutoMenu(byte selected);
+    void center(uint8_t row,
+                const char* text);
 
-    void showRecipe(byte recipeIndex);
+private:
 
-    void showManualTemp(int temp);
-
-    void showManualWeight(int weight);
-
-    void showReady();
-
-    void showDrying(int temp, int weight, int minutes);
+    LiquidCrystal_I2C lcd;
 };
-
-extern Display display;
 
 #endif
