@@ -11,12 +11,18 @@ Application::Application()
 
     // Default manual settings
     settings.temperature = 70;
-    settings.targetWeight = 2000;
+    settings.targetWeight = 1000;
     settings.autoMode = false;
     settings.recipeID = 0;
 
     dryingStartTime = 0;
     lastDryerUpdate = 0;
+
+    simulatedWeight = 1000;
+    initialWeight = 1000;
+
+    lastWeightUpdate = 0;
+    finishScreenShown = false;
 }
 
 void Application::begin()
@@ -209,8 +215,12 @@ if (state == STATE_READY)
 
         state = STATE_RUNNING;
 
+        initialWeight = 1000;
+        simulatedWeight = initialWeight;
+
         dryingStartTime = millis();
         lastDryerUpdate = millis();
+        lastWeightUpdate = millis();
 
         display.clear();
         display.print(0, 0, "Starting...");
@@ -257,64 +267,181 @@ if (state == STATE_RUNNING)
         millis() - dryingStartTime;
 
     if (elapsed - lastDryerUpdate >= 1000)
+
     {
-        lastDryerUpdate = millis();
+    lastDryerUpdate = millis();
 
-        unsigned long elapsedSeconds =
-            elapsed / 1000;
+    // --------------------------------
+    // Calculate elapsed time
+    // --------------------------------
 
-        unsigned int minutes =
-            elapsedSeconds / 60;
+    unsigned long elapsedSeconds =
+        elapsed / 1000;
 
-        unsigned int seconds =
-            elapsedSeconds % 60;
+    unsigned int minutes =
+        elapsedSeconds / 60;
 
-        char line1[17];
-        char line2[17];
+    unsigned int seconds =
+        elapsedSeconds % 60;
 
-        sprintf(
-            line1,
-            "Temp:%3d C",
-            settings.temperature
-        );
+    // --------------------------------
+    // Simulate drying weight loss
+    // --------------------------------
 
-        sprintf(
-            line2,
-            "Time:%02d:%02d",
-            minutes,
-            seconds
-        );
-
-        display.print(0, 0, line1);
-        display.print(0, 1, line2);
-
-        Serial.print("Drying | Temp: ");
-        Serial.print(settings.temperature);
-        Serial.print(" C | Time: ");
-        Serial.print(minutes);
-        Serial.print(":");
-
-        if (seconds < 10)
-            Serial.print("0");
-
-        Serial.println(seconds);
+    if (simulatedWeight > settings.targetWeight)
+    {
+        if (simulatedWeight - settings.targetWeight >= 5)
+        {
+            simulatedWeight -= 5;
+        }
+        else
+        {
+            // Prevent weight from going below target
+            simulatedWeight = settings.targetWeight;
+        }
     }
 
-    if (event == ENCODER_LONG_CLICK)
+    // --------------------------------
+    // Check if target weight is reached
+    // --------------------------------
+
+    if (simulatedWeight <= settings.targetWeight)
     {
-        state = STATE_MENU;
+        simulatedWeight = settings.targetWeight;
 
-        menuManager.openMain();
+        state = STATE_FINISHED;
 
-        display.drawMenu(
-            menuManager.currentMenu()->getTitle(),
-            menuManager.currentMenu()->getItem(
-                menuManager.currentMenu()->getSelectedIndex()
-            )
-        );
+        Serial.println();
+        Serial.println("==============================");
+        Serial.println(" DRYING COMPLETE");
+        Serial.print(" Final Weight: ");
+        Serial.print(simulatedWeight);
+        Serial.println(" g");
+        Serial.println("==============================");
     }
 
-    return;
+    // --------------------------------
+    // Calculate estimated remaining time
+    // --------------------------------
+
+    unsigned long estimatedRemainingSeconds = 0;
+
+    unsigned int weightLost =
+        initialWeight - simulatedWeight;
+
+    if (weightLost > 0 &&
+        simulatedWeight > settings.targetWeight)
+    {
+        unsigned int remainingWeight =
+            simulatedWeight - settings.targetWeight;
+
+        if (elapsedSeconds > 0)
+        {
+            // Weight loss rate in grams/second
+            unsigned long rate =
+                weightLost / elapsedSeconds;
+
+            if (rate > 0)
+            {
+                estimatedRemainingSeconds =
+                    remainingWeight / rate;
+            }
+        }
+    }
+
+    // --------------------------------
+    // Convert remaining time
+    // --------------------------------
+
+    unsigned int remainingMinutes =
+        estimatedRemainingSeconds / 60;
+
+    unsigned int remainingSeconds =
+        estimatedRemainingSeconds % 60;
+
+    // --------------------------------
+    // LCD Display
+    // --------------------------------
+
+    char line1[17];
+    char line2[17];
+
+    sprintf(
+        line1,
+        "T:%3dC W:%4dg",
+        settings.temperature,
+        simulatedWeight
+    );
+
+    sprintf(
+        line2,
+        "Remain:%02u:%02u",
+        remainingMinutes,
+        remainingSeconds
+    );
+
+    display.print(0, 0, line1);
+    display.print(0, 1, line2);
+
+    // --------------------------------
+    // Serial Monitor
+    // --------------------------------
+
+    Serial.print("Drying | Temp: ");
+    Serial.print(settings.temperature);
+
+    Serial.print(" C | Weight: ");
+    Serial.print(simulatedWeight);
+
+    Serial.print(" g | Time: ");
+
+    if (minutes < 10)
+        Serial.print("0");
+
+    Serial.print(minutes);
+    Serial.print(":");
+
+    if (seconds < 10)
+        Serial.print("0");
+
+    Serial.print(seconds);
+
+    Serial.print(" | Remaining: ");
+
+    if (remainingMinutes < 10)
+        Serial.print("0");
+
+    Serial.print(remainingMinutes);
+    Serial.print(":");
+
+    if (remainingSeconds < 10)
+        Serial.print("0");
+
+    Serial.println(remainingSeconds);
+    
+}
+if (state == STATE_FINISHED)
+{
+    display.clear();
+
+    display.center(0, "Drying");
+    display.center(1, "Complete!");
+
+    delay(2000);
+
+    display.clear();
+
+    char finalWeight[17];
+
+    sprintf(
+        finalWeight,
+        "Final:%4dg",
+        simulatedWeight
+    );
+
+    display.center(0, "Finished");
+    display.center(1, finalWeight);
+}
 }
     switch (event)
     {

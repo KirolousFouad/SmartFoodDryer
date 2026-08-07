@@ -27,6 +27,10 @@ private:
     
     unsigned long dryingStartTime;
     unsigned long lastDryerUpdate;
-};
 
+    unsigned int simulatedWeight;
+    unsigned int initialWeight;
+    unsigned long lastWeightUpdate;
+    bool finishScreenShown;
+};
 #endif

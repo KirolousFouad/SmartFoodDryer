@@ -1,8 +1,8 @@
 #include "Dryer.h"
 
-#include "States.h"
+#include "SystemState.h"
 
-State state;
+SystemState state;
 struct DryerSettings
 {
     uint8_t targetTemperature;
