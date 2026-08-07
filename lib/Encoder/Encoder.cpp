@@ -33,9 +33,9 @@ void Encoder::update()
     if (lastCLK == HIGH && currentCLK == LOW)
     {
         if (digitalRead(dtPin) == HIGH)
-            event = ENCODER_LEFT;
-        else
             event = ENCODER_RIGHT;
+        else
+            event = ENCODER_LEFT;
     }
 
     lastCLK = currentCLK;

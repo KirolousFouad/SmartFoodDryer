@@ -3,6 +3,11 @@
 #include "States.h"
 
 State state;
+struct DryerSettings
+{
+    uint8_t targetTemperature;
+    uint16_t targetWeight;
+};
 
 Dryer::Dryer()
 {

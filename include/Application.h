@@ -5,6 +5,8 @@
 #include "Encoder.h"
 #include "Menu.h"
 #include "MenuManager.h"
+#include "SystemState.h"
+#include "DryerSettings.h"
 
 class Application
 {
@@ -18,8 +20,13 @@ private:
     Display display;
     Encoder encoder;
     MenuManager menuManager;
+    SystemState state;
+    DryerSettings settings;
     
     unsigned long lastHeartbeat;
+    
+    unsigned long dryingStartTime;
+    unsigned long lastDryerUpdate;
 };
 
 #endif
