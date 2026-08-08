@@ -76,7 +76,7 @@ const char* Menu::getItem(uint8_t index) const
 
 MenuAction Menu::getSelectedAction() const
 {
-    if (itemCount == 0)
+    if (itemCount == 0 || selectedIndex >= itemCount)
         return ACTION_NONE;
 
     return items[selectedIndex].action;
@@ -84,7 +84,7 @@ MenuAction Menu::getSelectedAction() const
 
 uint8_t Menu::getSelectedParameter() const
 {
-    if (itemCount == 0)
+    if (itemCount == 0 || selectedIndex >= itemCount)
         return 0;
 
     return items[selectedIndex].parameter;

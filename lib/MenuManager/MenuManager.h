@@ -1,5 +1,5 @@
-#ifndef MENUMANAGER_H
-#define MENUMANAGER_H
+#ifndef MENU_MANAGER_H
+#define MENU_MANAGER_H
 
 #include "Menu.h"
 
@@ -17,11 +17,17 @@ public:
 
     void openRecipes();
 
+    void openConfirmation();
+
+    void back();
+
 private:
 
     Menu mainMenu;
 
     Menu recipeMenu;
+
+    Menu confirmationMenu;
 
     Menu* current;
 };

@@ -7,9 +7,9 @@ MenuManager::MenuManager()
 
 void MenuManager::begin()
 {
-    //-------------------------
+    // =========================
     // Main Menu
-    //-------------------------
+    // =========================
 
     mainMenu.setTitle("Food Dryer");
 
@@ -23,9 +23,10 @@ void MenuManager::begin()
         ACTION_OPEN_MANUAL
     );
 
-    //-------------------------
+
+    // =========================
     // Recipe Menu
-    //-------------------------
+    // =========================
 
     recipeMenu.setTitle("Recipes");
 
@@ -59,6 +60,26 @@ void MenuManager::begin()
         4
     );
 
+
+    // =========================
+    // Confirmation Menu
+    // =========================
+
+    confirmationMenu.setTitle("Start Recipe?");
+
+    confirmationMenu.addItem(
+        "YES",
+        ACTION_CONFIRM_RECIPE
+    );
+
+    confirmationMenu.addItem(
+        "NO",
+        ACTION_CANCEL_RECIPE
+    );
+
+
+    // Start at main menu
+
     current = &mainMenu;
 }
 
@@ -70,11 +91,35 @@ Menu* MenuManager::currentMenu()
 void MenuManager::openMain()
 {
     current = &mainMenu;
+
     current->resetSelection();
 }
 
 void MenuManager::openRecipes()
 {
     current = &recipeMenu;
+
     current->resetSelection();
+}
+
+void MenuManager::openConfirmation()
+{
+    current = &confirmationMenu;
+
+    current->resetSelection();
+}
+void MenuManager::back()
+{
+    if (current == &confirmationMenu)
+    {
+        openRecipes();
+    }
+    else if (current == &recipeMenu)
+    {
+        openMain();
+    }
+    else
+    {
+        openMain();
+    }
 }

@@ -1,15 +1,15 @@
 #include <Arduino.h>
 #include "Application.h"
+#include "RecipeDatabase.h"
 
 Application::Application()
     : encoder(2, 3, 4)
 {
     lastHeartbeat = 0;
 
-    // System state
     state = STATE_MENU;
 
-    // Default manual settings
+    // Default settings
     settings.temperature = 70;
     settings.targetWeight = 1000;
     settings.autoMode = false;
@@ -32,16 +32,16 @@ void Application::begin()
     display.begin();
     encoder.begin();
 
-    // Splash Screen
+    // Splash screen
     display.center(0, "Smart Dryer");
     display.center(1, "Firmware v0.2");
 
     delay(3000);
 
-    // Initialize Menus
+    // Initialize menus
     menuManager.begin();
 
-    // Draw Main Menu
+    // Show main menu
     display.drawMenu(
         menuManager.currentMenu()->getTitle(),
         menuManager.currentMenu()->getItem(
@@ -62,9 +62,9 @@ void Application::update()
 
     EncoderEvent event = encoder.getEvent();
 
-    //------------------------------------------------------
-    // MANUAL TEMPERATURE EDIT SCREEN
-    //------------------------------------------------------
+    // =========================================================
+    // MANUAL TEMPERATURE
+    // =========================================================
 
     if (state == STATE_MANUAL_TEMP)
     {
@@ -93,7 +93,13 @@ void Application::update()
 
             {
                 char buffer[17];
-                sprintf(buffer, "%4d g", settings.targetWeight);
+
+                sprintf(
+                    buffer,
+                    "Weight:%4d g",
+                    settings.targetWeight
+                );
+
                 display.print(0, 1, buffer);
             }
 
@@ -118,11 +124,16 @@ void Application::update()
             break;
         }
 
+        // Refresh temperature
         if (state == STATE_MANUAL_TEMP)
         {
             char buffer[17];
 
-            sprintf(buffer, "Temp: %2d C", settings.temperature);
+            sprintf(
+                buffer,
+                "Temp: %2d C",
+                settings.temperature
+            );
 
             display.print(0, 0, "Manual Temp");
             display.print(0, 1, buffer);
@@ -131,113 +142,59 @@ void Application::update()
         return;
     }
 
-    //------------------------------------------------------
-    // MENU NAVIGATION
-    //------------------------------------------------------
-    //------------------------------------------------------
-// MANUAL WEIGHT EDIT SCREEN
-//------------------------------------------------------
+    // =========================================================
+    // MANUAL WEIGHT
+    // =========================================================
 
-if (state == STATE_MANUAL_WEIGHT)
-{
-    switch (event)
-    {
-    case ENCODER_LEFT:
-
-        if (settings.targetWeight >= 50)
-            settings.targetWeight -= 50;
-
-        break;
-
-    case ENCODER_RIGHT:
-
-        if (settings.targetWeight <= 9950)
-            settings.targetWeight += 50;
-
-        break;
-
-    case ENCODER_CLICK:
-
-        state = STATE_READY;
-
-        display.clear();
-        display.print(0, 0, "Ready?");
-
-        display.print(0, 1, "Press = Start");
-
-        break;
-
-    case ENCODER_LONG_CLICK:
-
-        state = STATE_MENU;
-
-        menuManager.openMain();
-
-        display.drawMenu(
-            menuManager.currentMenu()->getTitle(),
-            menuManager.currentMenu()->getItem(
-                menuManager.currentMenu()->getSelectedIndex()
-            )
-        );
-
-        break;
-
-    default:
-        break;
-    }
-
-    // Refresh weight display
     if (state == STATE_MANUAL_WEIGHT)
     {
-        char buffer[17];
+        switch (event)
+        {
+        case ENCODER_LEFT:
 
-        sprintf(
-            buffer,
-            "Weight:%4d g",
-            settings.targetWeight
-        );
+            if (settings.targetWeight >= 50)
+                settings.targetWeight -= 50;
 
-        display.print(0, 0, "Target Weight");
-        display.print(0, 1, buffer);
-    }
+            break;
 
-    return;
-    }
-//------------------------------------------------------
-// READY SCREEN
-//------------------------------------------------------
+        case ENCODER_RIGHT:
 
-if (state == STATE_READY)
-{
-    switch (event)
-    {
-    case ENCODER_CLICK:
+            if (settings.targetWeight <= 9950)
+                settings.targetWeight += 50;
 
-        state = STATE_RUNNING;
+            break;
 
-        initialWeight = 1000;
-        simulatedWeight = initialWeight;
+        case ENCODER_CLICK:
 
-        dryingStartTime = millis();
-        lastDryerUpdate = millis();
-        lastWeightUpdate = millis();
+            state = STATE_READY;
 
-        display.clear();
-        display.print(0, 0, "Starting...");
+            display.clear();
 
-        delay(1000);
+            display.print(0, 0, "Ready?");
+            display.print(0, 1, "Press = Start");
 
-        display.clear();
+            break;
 
-        break;
+        case ENCODER_LONG_CLICK:
 
-    case ENCODER_LONG_CLICK:
+            state = STATE_MENU;
 
-        state = STATE_MANUAL_WEIGHT;
+            menuManager.openMain();
 
-        display.clear();
-        display.print(0, 0, "Target Weight");
+            display.drawMenu(
+                menuManager.currentMenu()->getTitle(),
+                menuManager.currentMenu()->getItem(
+                    menuManager.currentMenu()->getSelectedIndex()
+                )
+            );
 
+            break;
+
+        default:
+            break;
+        }
+
+        if (state == STATE_MANUAL_WEIGHT)
         {
             char buffer[17];
 
@@ -247,202 +204,308 @@ if (state == STATE_READY)
                 settings.targetWeight
             );
 
+            display.print(0, 0, "Target Weight");
             display.print(0, 1, buffer);
         }
 
-        break;
-
-    default:
-        break;
+        return;
     }
 
-    return;
-}
-//------------------------------------------------------
-// RUNNING SCREEN
-//------------------------------------------------------
-if (state == STATE_RUNNING)
-{
-    unsigned long elapsed =
-        millis() - dryingStartTime;
+    // =========================================================
+    // READY SCREEN
+    // =========================================================
 
-    if (elapsed - lastDryerUpdate >= 1000)
-
+    if (state == STATE_READY)
     {
-    lastDryerUpdate = millis();
-
-    // --------------------------------
-    // Calculate elapsed time
-    // --------------------------------
-
-    unsigned long elapsedSeconds =
-        elapsed / 1000;
-
-    unsigned int minutes =
-        elapsedSeconds / 60;
-
-    unsigned int seconds =
-        elapsedSeconds % 60;
-
-    // --------------------------------
-    // Simulate drying weight loss
-    // --------------------------------
-
-    if (simulatedWeight > settings.targetWeight)
-    {
-        if (simulatedWeight - settings.targetWeight >= 5)
+        switch (event)
         {
-            simulatedWeight -= 5;
-        }
-        else
-        {
-            // Prevent weight from going below target
-            simulatedWeight = settings.targetWeight;
-        }
-    }
+        case ENCODER_CLICK:
 
-    // --------------------------------
-    // Check if target weight is reached
-    // --------------------------------
+            state = STATE_RUNNING;
 
-    if (simulatedWeight <= settings.targetWeight)
-    {
-        simulatedWeight = settings.targetWeight;
+            initialWeight = 1000;
+            simulatedWeight = initialWeight;
 
-        state = STATE_FINISHED;
+            dryingStartTime = millis();
+            lastDryerUpdate = millis();
+            lastWeightUpdate = millis();
 
-        Serial.println();
-        Serial.println("==============================");
-        Serial.println(" DRYING COMPLETE");
-        Serial.print(" Final Weight: ");
-        Serial.print(simulatedWeight);
-        Serial.println(" g");
-        Serial.println("==============================");
-    }
+            finishScreenShown = false;
 
-    // --------------------------------
-    // Calculate estimated remaining time
-    // --------------------------------
+            display.clear();
+            display.print(0, 0, "Starting...");
 
-    unsigned long estimatedRemainingSeconds = 0;
+            delay(1000);
 
-    unsigned int weightLost =
-        initialWeight - simulatedWeight;
+            display.clear();
 
-    if (weightLost > 0 &&
-        simulatedWeight > settings.targetWeight)
-    {
-        unsigned int remainingWeight =
-            simulatedWeight - settings.targetWeight;
+            break;
 
-        if (elapsedSeconds > 0)
-        {
-            // Weight loss rate in grams/second
-            unsigned long rate =
-                weightLost / elapsedSeconds;
+        case ENCODER_LONG_CLICK:
 
-            if (rate > 0)
+            state = STATE_MANUAL_WEIGHT;
+
+            display.clear();
+
+            display.print(0, 0, "Target Weight");
+
             {
-                estimatedRemainingSeconds =
-                    remainingWeight / rate;
+                char buffer[17];
+
+                sprintf(
+                    buffer,
+                    "Weight:%4d g",
+                    settings.targetWeight
+                );
+
+                display.print(0, 1, buffer);
             }
+
+            break;
+
+        default:
+            break;
         }
+
+        return;
     }
 
-    // --------------------------------
-    // Convert remaining time
-    // --------------------------------
+    // =========================================================
+    // RUNNING SCREEN
+    // =========================================================
 
-    unsigned int remainingMinutes =
-        estimatedRemainingSeconds / 60;
+    if (state == STATE_RUNNING)
+    {
+        // Long press = stop and return to menu
+        if (event == ENCODER_LONG_CLICK)
+        {
+            state = STATE_MENU;
 
-    unsigned int remainingSeconds =
-        estimatedRemainingSeconds % 60;
+            menuManager.openMain();
 
-    // --------------------------------
-    // LCD Display
-    // --------------------------------
+            display.drawMenu(
+                menuManager.currentMenu()->getTitle(),
+                menuManager.currentMenu()->getItem(
+                    menuManager.currentMenu()->getSelectedIndex()
+                )
+            );
 
-    char line1[17];
-    char line2[17];
+            return;
+        }
 
-    sprintf(
-        line1,
-        "T:%3dC W:%4dg",
-        settings.temperature,
-        simulatedWeight
-    );
+        unsigned long elapsed =
+            millis() - dryingStartTime;
 
-    sprintf(
-        line2,
-        "Remain:%02u:%02u",
-        remainingMinutes,
-        remainingSeconds
-    );
+        if (elapsed - lastDryerUpdate >= 1000)
+        {
+            lastDryerUpdate = millis();
 
-    display.print(0, 0, line1);
-    display.print(0, 1, line2);
+            // ---------------------------------------------
+            // Time
+            // ---------------------------------------------
 
-    // --------------------------------
-    // Serial Monitor
-    // --------------------------------
+            unsigned long elapsedSeconds =
+                elapsed / 1000;
 
-    Serial.print("Drying | Temp: ");
-    Serial.print(settings.temperature);
+            unsigned int minutes =
+                elapsedSeconds / 60;
 
-    Serial.print(" C | Weight: ");
-    Serial.print(simulatedWeight);
+            unsigned int seconds =
+                elapsedSeconds % 60;
 
-    Serial.print(" g | Time: ");
+            // ---------------------------------------------
+            // Simulate weight loss
+            // ---------------------------------------------
 
-    if (minutes < 10)
-        Serial.print("0");
+            if (simulatedWeight > settings.targetWeight)
+            {
+                if (simulatedWeight - settings.targetWeight >= 5)
+                {
+                    simulatedWeight -= 5;
+                }
+                else
+                {
+                    simulatedWeight =
+                        settings.targetWeight;
+                }
+            }
 
-    Serial.print(minutes);
-    Serial.print(":");
+            // ---------------------------------------------
+            // Target reached
+            // ---------------------------------------------
 
-    if (seconds < 10)
-        Serial.print("0");
+            if (simulatedWeight <= settings.targetWeight)
+            {
+                simulatedWeight =
+                    settings.targetWeight;
 
-    Serial.print(seconds);
+                state = STATE_FINISHED;
 
-    Serial.print(" | Remaining: ");
+                Serial.println();
+                Serial.println("==============================");
+                Serial.println(" DRYING COMPLETE");
+                Serial.print(" Final Weight: ");
+                Serial.print(simulatedWeight);
+                Serial.println(" g");
+                Serial.println("==============================");
+            }
 
-    if (remainingMinutes < 10)
-        Serial.print("0");
+            // ---------------------------------------------
+            // Remaining time
+            // ---------------------------------------------
 
-    Serial.print(remainingMinutes);
-    Serial.print(":");
+            unsigned long estimatedRemainingSeconds = 0;
 
-    if (remainingSeconds < 10)
-        Serial.print("0");
+            unsigned int weightLost =
+                initialWeight - simulatedWeight;
 
-    Serial.println(remainingSeconds);
-    
-}
-if (state == STATE_FINISHED)
-{
-    display.clear();
+            if (
+                weightLost > 0 &&
+                simulatedWeight > settings.targetWeight
+            )
+            {
+                unsigned int remainingWeight =
+                    simulatedWeight - settings.targetWeight;
 
-    display.center(0, "Drying");
-    display.center(1, "Complete!");
+                if (elapsedSeconds > 0)
+                {
+                    unsigned long rate =
+                        weightLost / elapsedSeconds;
 
-    delay(2000);
+                    if (rate > 0)
+                    {
+                        estimatedRemainingSeconds =
+                            remainingWeight / rate;
+                    }
+                }
+            }
 
-    display.clear();
+            unsigned int remainingMinutes =
+                estimatedRemainingSeconds / 60;
 
-    char finalWeight[17];
+            unsigned int remainingSeconds =
+                estimatedRemainingSeconds % 60;
 
-    sprintf(
-        finalWeight,
-        "Final:%4dg",
-        simulatedWeight
-    );
+            // ---------------------------------------------
+            // LCD
+            // ---------------------------------------------
 
-    display.center(0, "Finished");
-    display.center(1, finalWeight);
-}
-}
+            char line1[17];
+            char line2[17];
+
+            sprintf(
+                line1,
+                "T:%3dC W:%4dg",
+                settings.temperature,
+                simulatedWeight
+            );
+
+            sprintf(
+                line2,
+                "Remain:%02u:%02u",
+                remainingMinutes,
+                remainingSeconds
+            );
+
+            display.print(0, 0, line1);
+            display.print(0, 1, line2);
+
+            // ---------------------------------------------
+            // Serial
+            // ---------------------------------------------
+
+            Serial.print("Drying | Temp: ");
+            Serial.print(settings.temperature);
+
+            Serial.print(" C | Weight: ");
+            Serial.print(simulatedWeight);
+
+            Serial.print(" g | Time: ");
+
+            if (minutes < 10)
+                Serial.print("0");
+
+            Serial.print(minutes);
+            Serial.print(":");
+
+            if (seconds < 10)
+                Serial.print("0");
+
+            Serial.print(seconds);
+
+            Serial.print(" | Remaining: ");
+
+            if (remainingMinutes < 10)
+                Serial.print("0");
+
+            Serial.print(remainingMinutes);
+            Serial.print(":");
+
+            if (remainingSeconds < 10)
+                Serial.print("0");
+
+            Serial.println(remainingSeconds);
+        }
+
+        return;
+    }
+
+    // =========================================================
+    // FINISHED
+    // =========================================================
+
+    if (state == STATE_FINISHED)
+    {
+        if (!finishScreenShown)
+        {
+            finishScreenShown = true;
+
+            display.clear();
+
+            display.center(0, "Drying");
+            display.center(1, "Complete!");
+
+            delay(2000);
+
+            display.clear();
+
+            char finalWeight[17];
+
+            sprintf(
+                finalWeight,
+                "Final:%4dg",
+                simulatedWeight
+            );
+
+            display.center(0, "Finished");
+            display.center(1, finalWeight);
+        }
+
+        // Click = return to main menu
+        if (event == ENCODER_CLICK ||
+            event == ENCODER_LONG_CLICK)
+        {
+            state = STATE_MENU;
+
+            finishScreenShown = false;
+
+            menuManager.openMain();
+
+            display.drawMenu(
+                menuManager.currentMenu()->getTitle(),
+                menuManager.currentMenu()->getItem(
+                    menuManager.currentMenu()->getSelectedIndex()
+                )
+            );
+        }
+
+        return;
+    }
+
+    // =========================================================
+    // MENU NAVIGATION
+    // =========================================================
+
     switch (event)
     {
     case ENCODER_LEFT:
@@ -471,11 +534,23 @@ if (state == STATE_FINISHED)
 
         break;
 
+    // =========================================================
+    // CLICK
+    // =========================================================
+
     case ENCODER_CLICK:
 
-        switch (menuManager.currentMenu()->getSelectedAction())
+        switch (
+            menuManager.currentMenu()->getSelectedAction()
+        )
         {
+        // -----------------------------------------------------
+        // AUTO
+        // -----------------------------------------------------
+
         case ACTION_OPEN_RECIPES:
+
+            settings.autoMode = true;
 
             menuManager.openRecipes();
 
@@ -488,26 +563,161 @@ if (state == STATE_FINISHED)
 
             break;
 
+        // -----------------------------------------------------
+        // MANUAL
+        // -----------------------------------------------------
+
         case ACTION_OPEN_MANUAL:
+
+            settings.autoMode = false;
 
             state = STATE_MANUAL_TEMP;
 
             display.clear();
+
             display.print(0, 0, "Manual Temp");
 
             {
                 char buffer[17];
-                sprintf(buffer, "Temp: %2d C", settings.temperature);
+
+                sprintf(
+                    buffer,
+                    "Temp: %2d C",
+                    settings.temperature
+                );
+
                 display.print(0, 1, buffer);
             }
 
             break;
 
-        case ACTION_START_RECIPE:
+        // -----------------------------------------------------
+        // SELECT RECIPE
+        // -----------------------------------------------------
 
-            Serial.print("Starting Recipe ID: ");
-            Serial.println(
-                menuManager.currentMenu()->getSelectedParameter()
+        case ACTION_START_RECIPE:
+        {
+            uint8_t recipeID =
+                menuManager.currentMenu()
+                    ->getSelectedParameter();
+
+            settings.recipeID = recipeID;
+            settings.autoMode = true;
+
+            const Recipe& recipe =
+                RecipeDatabase::getRecipe(recipeID);
+
+            Serial.println();
+            Serial.println("==============================");
+            Serial.println(" AUTO RECIPE SELECTED");
+            Serial.println("==============================");
+
+            Serial.print("Recipe: ");
+            Serial.println(recipe.name);
+
+            Serial.print("Temperature: ");
+            Serial.print(recipe.temperature);
+            Serial.println(" C");
+
+            Serial.print("Target Weight: ");
+            Serial.print(recipe.targetWeight);
+            Serial.println(" g");
+
+            Serial.println("==============================");
+
+            // Save recipe settings
+            settings.temperature =
+                recipe.temperature;
+
+            settings.targetWeight =
+                recipe.targetWeight;
+
+            // Open confirmation menu
+            menuManager.openConfirmation();
+
+            display.drawMenu(
+                menuManager.currentMenu()->getTitle(),
+                menuManager.currentMenu()->getItem(
+                    menuManager.currentMenu()->getSelectedIndex()
+                )
+            );
+
+            break;
+        }
+
+        // -----------------------------------------------------
+        // CONFIRM RECIPE
+        // -----------------------------------------------------
+
+        case ACTION_CONFIRM_RECIPE:
+        {
+            const Recipe& recipe =
+                RecipeDatabase::getRecipe(
+                    settings.recipeID
+                );
+
+            Serial.println();
+            Serial.println("==============================");
+            Serial.println(" RECIPE CONFIRMED");
+            Serial.println("==============================");
+
+            Serial.print("Recipe: ");
+            Serial.println(recipe.name);
+
+            Serial.print("Temperature: ");
+            Serial.print(recipe.temperature);
+            Serial.println(" C");
+
+            Serial.print("Target Weight: ");
+            Serial.print(recipe.targetWeight);
+            Serial.println(" g");
+
+            Serial.println("==============================");
+
+            // Use recipe settings
+            settings.temperature =
+                recipe.temperature;
+
+            settings.targetWeight =
+                recipe.targetWeight;
+
+            // Start drying
+            state = STATE_RUNNING;
+
+            initialWeight = 1000;
+            simulatedWeight = initialWeight;
+
+            dryingStartTime = millis();
+            lastDryerUpdate = millis();
+            lastWeightUpdate = millis();
+
+            finishScreenShown = false;
+
+            display.clear();
+            display.print(0, 0, "Starting...");
+
+            delay(1000);
+
+            display.clear();
+
+            break;
+        }
+
+        // -----------------------------------------------------
+        // CANCEL RECIPE
+        // -----------------------------------------------------
+
+        case ACTION_CANCEL_RECIPE:
+
+            Serial.println("Recipe cancelled.");
+
+            menuManager.openRecipes();
+
+            display.drawMenu(
+                menuManager.currentMenu()->getTitle(),
+                menuManager.currentMenu()->getItem(
+                    menuManager.currentMenu()->getSelectedIndex()
+                )
             );
 
             break;
@@ -518,7 +728,13 @@ if (state == STATE_FINISHED)
 
         break;
 
+    // =========================================================
+    // LONG CLICK
+    // =========================================================
+
     case ENCODER_LONG_CLICK:
+
+        state = STATE_MENU;
 
         menuManager.openMain();
 
@@ -534,5 +750,4 @@ if (state == STATE_FINISHED)
     default:
         break;
     }
-
 }
