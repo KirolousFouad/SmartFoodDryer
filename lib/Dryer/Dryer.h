@@ -3,30 +3,45 @@
 
 #include <Arduino.h>
 
-enum Screen
-{
-    MAIN_MENU,
-    AUTO_MENU,
-    RECIPE_INFO,
-    MANUAL_TEMP,
-    MANUAL_WEIGHT,
-    READY,
-    DRYING
-};
+#include "Fan.h"
+#include "Heater.h"
 
 class Dryer
 {
 public:
-    Screen screen;
-    bool autoMode;
-    byte selectedRecipe;
-    int targetTemp;
-    int targetWeight;
 
-    Dryer();
-    void reset();
+    Dryer(
+        uint8_t circulationFanPin,
+        uint8_t coolingFanPwmPin
+    );
+
+    void begin();
+
+    void start(uint8_t targetTemperature);
+    void stop();
+
+    void update();
+
+    bool isRunning() const;
+
+    // =====================================================
+    // Fan control
+    // =====================================================
+
+    void circulationOn();
+    void circulationOff();
+
+    void setCoolingSpeed(uint8_t percent);
+    void coolingOff();
+
+    uint8_t getCoolingSpeed() const;
+
+private:
+
+    bool running;
+
+    Fan fan;
+    Heater heater;
 };
-
-extern Dryer dryer;
 
 #endif

@@ -3,7 +3,19 @@
 #include "RecipeDatabase.h"
 
 Application::Application()
-    : encoder(2, 3, 4)
+    : display(),
+      encoder(2, 3, 4),
+      menuManager(),
+      state(STATE_MENU),
+      dryer(8, 9),
+      temperatureManager(5, 13, 10, 12),
+      lastHeartbeat(0),
+      dryingStartTime(0),
+      lastDryerUpdate(0),
+      simulatedWeight(0),
+      initialWeight(0),
+      lastWeightUpdate(0),
+      finishScreenShown(false)
 {
     lastHeartbeat = 0;
 
@@ -31,6 +43,41 @@ void Application::begin()
 
     display.begin();
     encoder.begin();
+    dryer.begin();
+    temperatureManager.begin();
+    Serial.println();
+    Serial.println("==============================");
+    Serial.println(" FAN TEST");
+    Serial.println("==============================");
+    Serial.println("Fan 1 ON");
+    dryer.circulationOn();
+    delay(2000);
+
+    Serial.println("Fan 1 OFF");
+    dryer.circulationOff();
+    delay(1000);
+
+    Serial.println("Fan 2 25%");
+    dryer.setCoolingSpeed(25);
+    delay(2000);
+
+    Serial.println("Fan 2 50%");
+    dryer.setCoolingSpeed(50);
+    delay(2000);
+
+    Serial.println("Fan 2 75%");
+    dryer.setCoolingSpeed(75);
+    delay(2000);
+
+    Serial.println("Fan 2 100%");
+    dryer.setCoolingSpeed(100);
+    delay(2000);
+
+    Serial.println("Fan 2 OFF");
+    dryer.coolingOff();
+    Serial.println("==============================");
+    Serial.println(" FAN TEST COMPLETE");
+    Serial.println("==============================");
 
     // Splash screen
     display.center(0, "Smart Dryer");
@@ -45,9 +92,7 @@ void Application::begin()
     display.drawMenu(
         menuManager.currentMenu()->getTitle(),
         menuManager.currentMenu()->getItem(
-            menuManager.currentMenu()->getSelectedIndex()
-        )
-    );
+            menuManager.currentMenu()->getSelectedIndex()));
 
     Serial.println();
     Serial.println("==============================");
@@ -59,6 +104,15 @@ void Application::begin()
 void Application::update()
 {
     encoder.update();
+
+    static unsigned long lastTemperatureUpdate = 0;
+
+    if (millis() - lastTemperatureUpdate >= 1000)
+    {
+        lastTemperatureUpdate = millis();
+
+        temperatureManager.update();
+    }
 
     EncoderEvent event = encoder.getEvent();
 
@@ -97,8 +151,7 @@ void Application::update()
                 sprintf(
                     buffer,
                     "Weight:%4d g",
-                    settings.targetWeight
-                );
+                    settings.targetWeight);
 
                 display.print(0, 1, buffer);
             }
@@ -114,9 +167,7 @@ void Application::update()
             display.drawMenu(
                 menuManager.currentMenu()->getTitle(),
                 menuManager.currentMenu()->getItem(
-                    menuManager.currentMenu()->getSelectedIndex()
-                )
-            );
+                    menuManager.currentMenu()->getSelectedIndex()));
 
             break;
 
@@ -132,8 +183,7 @@ void Application::update()
             sprintf(
                 buffer,
                 "Temp: %2d C",
-                settings.temperature
-            );
+                settings.temperature);
 
             display.print(0, 0, "Manual Temp");
             display.print(0, 1, buffer);
@@ -184,9 +234,7 @@ void Application::update()
             display.drawMenu(
                 menuManager.currentMenu()->getTitle(),
                 menuManager.currentMenu()->getItem(
-                    menuManager.currentMenu()->getSelectedIndex()
-                )
-            );
+                    menuManager.currentMenu()->getSelectedIndex()));
 
             break;
 
@@ -201,8 +249,7 @@ void Application::update()
             sprintf(
                 buffer,
                 "Weight:%4d g",
-                settings.targetWeight
-            );
+                settings.targetWeight);
 
             display.print(0, 0, "Target Weight");
             display.print(0, 1, buffer);
@@ -224,6 +271,7 @@ void Application::update()
             state = STATE_RUNNING;
 
             initialWeight = 1000;
+
             simulatedWeight = initialWeight;
 
             dryingStartTime = millis();
@@ -231,6 +279,8 @@ void Application::update()
             lastWeightUpdate = millis();
 
             finishScreenShown = false;
+
+            dryer.start(settings.temperature);
 
             display.clear();
             display.print(0, 0, "Starting...");
@@ -255,8 +305,7 @@ void Application::update()
                 sprintf(
                     buffer,
                     "Weight:%4d g",
-                    settings.targetWeight
-                );
+                    settings.targetWeight);
 
                 display.print(0, 1, buffer);
             }
@@ -276,6 +325,8 @@ void Application::update()
 
     if (state == STATE_RUNNING)
     {
+        dryer.update();
+
         // Long press = stop and return to menu
         if (event == ENCODER_LONG_CLICK)
         {
@@ -286,9 +337,7 @@ void Application::update()
             display.drawMenu(
                 menuManager.currentMenu()->getTitle(),
                 menuManager.currentMenu()->getItem(
-                    menuManager.currentMenu()->getSelectedIndex()
-                )
-            );
+                    menuManager.currentMenu()->getSelectedIndex()));
 
             return;
         }
@@ -339,6 +388,8 @@ void Application::update()
                 simulatedWeight =
                     settings.targetWeight;
 
+                dryer.stop();
+
                 state = STATE_FINISHED;
 
                 Serial.println();
@@ -361,8 +412,7 @@ void Application::update()
 
             if (
                 weightLost > 0 &&
-                simulatedWeight > settings.targetWeight
-            )
+                simulatedWeight > settings.targetWeight)
             {
                 unsigned int remainingWeight =
                     simulatedWeight - settings.targetWeight;
@@ -397,15 +447,13 @@ void Application::update()
                 line1,
                 "T:%3dC W:%4dg",
                 settings.temperature,
-                simulatedWeight
-            );
+                simulatedWeight);
 
             sprintf(
                 line2,
                 "Remain:%02u:%02u",
                 remainingMinutes,
-                remainingSeconds
-            );
+                remainingSeconds);
 
             display.print(0, 0, line1);
             display.print(0, 1, line2);
@@ -474,8 +522,7 @@ void Application::update()
             sprintf(
                 finalWeight,
                 "Final:%4dg",
-                simulatedWeight
-            );
+                simulatedWeight);
 
             display.center(0, "Finished");
             display.center(1, finalWeight);
@@ -494,9 +541,7 @@ void Application::update()
             display.drawMenu(
                 menuManager.currentMenu()->getTitle(),
                 menuManager.currentMenu()->getItem(
-                    menuManager.currentMenu()->getSelectedIndex()
-                )
-            );
+                    menuManager.currentMenu()->getSelectedIndex()));
         }
 
         return;
@@ -515,9 +560,7 @@ void Application::update()
         display.drawMenu(
             menuManager.currentMenu()->getTitle(),
             menuManager.currentMenu()->getItem(
-                menuManager.currentMenu()->getSelectedIndex()
-            )
-        );
+                menuManager.currentMenu()->getSelectedIndex()));
 
         break;
 
@@ -528,25 +571,22 @@ void Application::update()
         display.drawMenu(
             menuManager.currentMenu()->getTitle(),
             menuManager.currentMenu()->getItem(
-                menuManager.currentMenu()->getSelectedIndex()
-            )
-        );
+                menuManager.currentMenu()->getSelectedIndex()));
 
         break;
 
-    // =========================================================
-    // CLICK
-    // =========================================================
+        // =========================================================
+        // CLICK
+        // =========================================================
 
     case ENCODER_CLICK:
 
         switch (
-            menuManager.currentMenu()->getSelectedAction()
-        )
+            menuManager.currentMenu()->getSelectedAction())
         {
-        // -----------------------------------------------------
-        // AUTO
-        // -----------------------------------------------------
+            // -----------------------------------------------------
+            // AUTO
+            // -----------------------------------------------------
 
         case ACTION_OPEN_RECIPES:
 
@@ -557,15 +597,13 @@ void Application::update()
             display.drawMenu(
                 menuManager.currentMenu()->getTitle(),
                 menuManager.currentMenu()->getItem(
-                    menuManager.currentMenu()->getSelectedIndex()
-                )
-            );
+                    menuManager.currentMenu()->getSelectedIndex()));
 
             break;
 
-        // -----------------------------------------------------
-        // MANUAL
-        // -----------------------------------------------------
+            // -----------------------------------------------------
+            // MANUAL
+            // -----------------------------------------------------
 
         case ACTION_OPEN_MANUAL:
 
@@ -583,17 +621,16 @@ void Application::update()
                 sprintf(
                     buffer,
                     "Temp: %2d C",
-                    settings.temperature
-                );
+                    settings.temperature);
 
                 display.print(0, 1, buffer);
             }
 
             break;
 
-        // -----------------------------------------------------
-        // SELECT RECIPE
-        // -----------------------------------------------------
+            // -----------------------------------------------------
+            // SELECT RECIPE
+            // -----------------------------------------------------
 
         case ACTION_START_RECIPE:
         {
@@ -604,7 +641,7 @@ void Application::update()
             settings.recipeID = recipeID;
             settings.autoMode = true;
 
-            const Recipe& recipe =
+            const Recipe &recipe =
                 RecipeDatabase::getRecipe(recipeID);
 
             Serial.println();
@@ -638,23 +675,20 @@ void Application::update()
             display.drawMenu(
                 menuManager.currentMenu()->getTitle(),
                 menuManager.currentMenu()->getItem(
-                    menuManager.currentMenu()->getSelectedIndex()
-                )
-            );
+                    menuManager.currentMenu()->getSelectedIndex()));
 
             break;
         }
 
-        // -----------------------------------------------------
-        // CONFIRM RECIPE
-        // -----------------------------------------------------
+            // -----------------------------------------------------
+            // CONFIRM RECIPE
+            // -----------------------------------------------------
 
         case ACTION_CONFIRM_RECIPE:
         {
-            const Recipe& recipe =
+            const Recipe &recipe =
                 RecipeDatabase::getRecipe(
-                    settings.recipeID
-                );
+                    settings.recipeID);
 
             Serial.println();
             Serial.println("==============================");
@@ -693,6 +727,8 @@ void Application::update()
 
             finishScreenShown = false;
 
+            dryer.start(settings.temperature);
+
             display.clear();
             display.print(0, 0, "Starting...");
 
@@ -703,9 +739,9 @@ void Application::update()
             break;
         }
 
-        // -----------------------------------------------------
-        // CANCEL RECIPE
-        // -----------------------------------------------------
+            // -----------------------------------------------------
+            // CANCEL RECIPE
+            // -----------------------------------------------------
 
         case ACTION_CANCEL_RECIPE:
 
@@ -716,9 +752,7 @@ void Application::update()
             display.drawMenu(
                 menuManager.currentMenu()->getTitle(),
                 menuManager.currentMenu()->getItem(
-                    menuManager.currentMenu()->getSelectedIndex()
-                )
-            );
+                    menuManager.currentMenu()->getSelectedIndex()));
 
             break;
 
@@ -728,9 +762,9 @@ void Application::update()
 
         break;
 
-    // =========================================================
-    // LONG CLICK
-    // =========================================================
+        // =========================================================
+        // LONG CLICK
+        // =========================================================
 
     case ENCODER_LONG_CLICK:
 
@@ -741,9 +775,7 @@ void Application::update()
         display.drawMenu(
             menuManager.currentMenu()->getTitle(),
             menuManager.currentMenu()->getItem(
-                menuManager.currentMenu()->getSelectedIndex()
-            )
-        );
+                menuManager.currentMenu()->getSelectedIndex()));
 
         break;
 

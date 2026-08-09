@@ -1,28 +1,123 @@
 #include "Dryer.h"
 
-#include "SystemState.h"
-
-SystemState state;
-struct DryerSettings
+Dryer::Dryer(
+    uint8_t circulationFanPin,
+    uint8_t coolingFanPwmPin
+)
+    : running(false),
+      fan(circulationFanPin, coolingFanPwmPin),
+      heater()
 {
-    uint8_t targetTemperature;
-    uint16_t targetWeight;
-};
-
-Dryer::Dryer()
-{
-    reset();
 }
 
-void Dryer::reset()
+void Dryer::begin()
 {
-    state = STATE_MENU;
+    running = false;
 
-    autoMode = true;
+    fan.begin();
+    heater.begin();
+}
 
-    selectedRecipe = 0;
+// =====================================================
+// DRYER START
+// =====================================================
 
-    targetTemp = 60;
+void Dryer::start(uint8_t targetTemperature)
+{
+    if (running)
+        return;
 
-    targetWeight = 1000;
+    running = true;
+
+    Serial.println();
+    Serial.println("==============================");
+    Serial.println(" DRYER START");
+    Serial.println("==============================");
+
+    Serial.print("Target Temperature: ");
+    Serial.print(targetTemperature);
+    Serial.println(" C");
+
+    // Circulation fan always runs at 100%
+    fan.circulationOn();
+
+    // Cooling fan initially OFF
+    fan.coolingOff();
+
+    // Set and start heater
+    heater.setTemperature(targetTemperature);
+    heater.start();
+}
+
+// =====================================================
+// DRYER STOP
+// =====================================================
+
+void Dryer::stop()
+{
+    if (!running)
+        return;
+
+    heater.stop();
+
+    // Turn both fans OFF
+    fan.circulationOff();
+    fan.coolingOff();
+
+    running = false;
+
+    Serial.println();
+    Serial.println("==============================");
+    Serial.println(" DRYER STOP");
+    Serial.println("==============================");
+}
+
+// =====================================================
+// DRYER UPDATE
+// =====================================================
+
+void Dryer::update()
+{
+    if (!running)
+        return;
+
+    // Temperature-control logic will be added later.
+}
+
+// =====================================================
+// STATUS
+// =====================================================
+
+bool Dryer::isRunning() const
+{
+    return running;
+}
+
+// =====================================================
+// FAN CONTROL
+// =====================================================
+
+void Dryer::circulationOn()
+{
+    fan.circulationOn();
+}
+
+void Dryer::circulationOff()
+{
+    fan.circulationOff();
+}
+
+void Dryer::setCoolingSpeed(uint8_t percent)
+{
+    fan.setCoolingSpeed(percent);
+}
+
+void Dryer::coolingOff()
+{
+    fan.coolingOff();
+}
+
+uint8_t Dryer::getCoolingSpeed() const
+{
+    return fan.getCoolingSpeed();
 }
