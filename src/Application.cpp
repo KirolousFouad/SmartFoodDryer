@@ -1,653 +1,500 @@
-#include <Arduino.h>
 #include "Application.h"
+#include "Config.h"
 #include "RecipeDatabase.h"
+
+#include <Arduino.h>
+#include <math.h>
+
+// =====================================================
+// CONSTRUCTOR
+// =====================================================
 
 Application::Application()
     : display(),
-      encoder(2, 3, 4),
+      encoder(
+          ENCODER_CLK,
+          ENCODER_DT,
+          ENCODER_SW),
       menuManager(),
       state(STATE_MENU),
-      dryer(8, 9),
-      temperatureManager(5, 13, 10, 12),
+      settings(),
+      dryer(
+          8, // Circulation fan
+          9  // Cooling fan PWM
+          ),
+      temperatureManager(
+          5,  // DS18B20 data
+          13, // MAX6675 SCK
+          10, // MAX6675 CS
+          12  // MAX6675 SO / DO
+          ),
       lastHeartbeat(0),
       dryingStartTime(0),
       lastDryerUpdate(0),
-      simulatedWeight(0),
-      initialWeight(0),
-      lastWeightUpdate(0),
+      lastDisplayUpdate(0),
+      lastTemperatureControl(0),
+      heaterEnabled(false),
       finishScreenShown(false)
 {
-    lastHeartbeat = 0;
-
-    state = STATE_MENU;
-
-    // Default settings
-    settings.temperature = 70;
-    settings.targetWeight = 1000;
+    settings.temperature = 60;
+    settings.targetWeight = 0;
     settings.autoMode = false;
     settings.recipeID = 0;
-
-    dryingStartTime = 0;
-    lastDryerUpdate = 0;
-
-    simulatedWeight = 1000;
-    initialWeight = 1000;
-
-    lastWeightUpdate = 0;
-    finishScreenShown = false;
 }
+
+// =====================================================
+// BEGIN
+// =====================================================
 
 void Application::begin()
 {
     Serial.begin(115200);
 
-    display.begin();
-    encoder.begin();
-    dryer.begin();
-    temperatureManager.begin();
+    delay(500);
+
     Serial.println();
     Serial.println("==============================");
-    Serial.println(" FAN TEST");
+    Serial.println(" SMART FOOD DRYER");
+    Serial.println(" Firmware Version 0.2.0");
     Serial.println("==============================");
-    Serial.println("Fan 1 ON");
-    dryer.circulationOn();
-    delay(2000);
 
-    Serial.println("Fan 1 OFF");
-    dryer.circulationOff();
+    // -------------------------------------------------
+    // Display
+    // -------------------------------------------------
+
+    Serial.println("[INIT] Display...");
+
+    display.begin();
+
+    display.clear();
+
+    display.center(
+        0,
+        "Smart Dryer"
+    );
+
+    display.center(
+        1,
+        "Starting..."
+    );
+
     delay(1000);
 
-    Serial.println("Fan 2 25%");
-    dryer.setCoolingSpeed(25);
-    delay(2000);
+    Serial.println("[INIT] Display OK");
 
-    Serial.println("Fan 2 50%");
-    dryer.setCoolingSpeed(50);
-    delay(2000);
+    // -------------------------------------------------
+    // Encoder
+    // -------------------------------------------------
 
-    Serial.println("Fan 2 75%");
-    dryer.setCoolingSpeed(75);
-    delay(2000);
+    Serial.println("[INIT] Encoder...");
 
-    Serial.println("Fan 2 100%");
-    dryer.setCoolingSpeed(100);
-    delay(2000);
+    encoder.begin();
 
-    Serial.println("Fan 2 OFF");
-    dryer.coolingOff();
-    Serial.println("==============================");
-    Serial.println(" FAN TEST COMPLETE");
-    Serial.println("==============================");
+    Serial.println("[INIT] Encoder OK");
 
-    // Splash screen
-    display.center(0, "Smart Dryer");
-    display.center(1, "Firmware v0.2");
+    // -------------------------------------------------
+    // Menu Manager
+    // -------------------------------------------------
 
-    delay(3000);
+    Serial.println("[INIT] Menu Manager...");
 
-    // Initialize menus
     menuManager.begin();
 
-    // Show main menu
-    display.drawMenu(
-        menuManager.currentMenu()->getTitle(),
-        menuManager.currentMenu()->getItem(
-            menuManager.currentMenu()->getSelectedIndex()));
+    Serial.println("[INIT] Menu Manager OK");
+
+    // -------------------------------------------------
+    // Dryer
+    // -------------------------------------------------
+
+    Serial.println("[INIT] Dryer...");
+
+    dryer.begin();
+
+    Serial.println("[INIT] Dryer OK");
+
+    // -------------------------------------------------
+    // Temperature Manager
+    // -------------------------------------------------
+
+    Serial.println("[INIT] Temperature Manager...");
+
+    temperatureManager.begin();
+
+    Serial.println("[INIT] Temperature Manager OK");
+
+    // -------------------------------------------------
+    // Initial State
+    // -------------------------------------------------
+
+    state = STATE_MENU;
+
+    lastHeartbeat = millis();
+
+    dryingStartTime = 0;
+
+    lastDryerUpdate = millis();
+
+    lastDisplayUpdate = millis();
+
+    lastTemperatureControl = millis();
+    heaterEnabled = false;
+
+    finishScreenShown = false;
+
+    menuManager.openMain();
+
+    display.clear();
+
+    drawCurrentMenu();
 
     Serial.println();
     Serial.println("==============================");
-    Serial.println(" Smart Food Dryer Firmware");
-    Serial.println(" Version 0.2.0");
+    Serial.println(" SYSTEM READY");
     Serial.println("==============================");
 }
 
+// =====================================================
+// UPDATE
+// =====================================================
+
 void Application::update()
 {
+    // -------------------------------------------------
+    // Encoder
+    // -------------------------------------------------
+
     encoder.update();
+
+    EncoderEvent event =
+        encoder.getEvent();
+
+    // -------------------------------------------------
+    // Temperature update every 1 second
+    // -------------------------------------------------
 
     static unsigned long lastTemperatureUpdate = 0;
 
     if (millis() - lastTemperatureUpdate >= 1000)
     {
+        temperatureManager.update();
+
         lastTemperatureUpdate = millis();
 
-        temperatureManager.update();
+        if (state == STATE_RUNNING)
+        {
+            updateTemperatureControl();
+        }
     }
 
-    EncoderEvent event = encoder.getEvent();
-
-    // =========================================================
-    // MANUAL TEMPERATURE
-    // =========================================================
-
-    if (state == STATE_MANUAL_TEMP)
-    {
-        switch (event)
-        {
-        case ENCODER_LEFT:
-
-            if (settings.temperature > 30)
-                settings.temperature--;
-
-            break;
-
-        case ENCODER_RIGHT:
-
-            if (settings.temperature < 90)
-                settings.temperature++;
-
-            break;
-
-        case ENCODER_CLICK:
-
-            state = STATE_MANUAL_WEIGHT;
-
-            display.clear();
-            display.print(0, 0, "Target Weight");
-
-            {
-                char buffer[17];
-
-                sprintf(
-                    buffer,
-                    "Weight:%4d g",
-                    settings.targetWeight);
-
-                display.print(0, 1, buffer);
-            }
-
-            break;
-
-        case ENCODER_LONG_CLICK:
-
-            state = STATE_MENU;
-
-            menuManager.openMain();
-
-            display.drawMenu(
-                menuManager.currentMenu()->getTitle(),
-                menuManager.currentMenu()->getItem(
-                    menuManager.currentMenu()->getSelectedIndex()));
-
-            break;
-
-        default:
-            break;
-        }
-
-        // Refresh temperature
-        if (state == STATE_MANUAL_TEMP)
-        {
-            char buffer[17];
-
-            sprintf(
-                buffer,
-                "Temp: %2d C",
-                settings.temperature);
-
-            display.print(0, 0, "Manual Temp");
-            display.print(0, 1, buffer);
-        }
-
-        return;
-    }
-
-    // =========================================================
-    // MANUAL WEIGHT
-    // =========================================================
-
-    if (state == STATE_MANUAL_WEIGHT)
-    {
-        switch (event)
-        {
-        case ENCODER_LEFT:
-
-            if (settings.targetWeight >= 50)
-                settings.targetWeight -= 50;
-
-            break;
-
-        case ENCODER_RIGHT:
-
-            if (settings.targetWeight <= 9950)
-                settings.targetWeight += 50;
-
-            break;
-
-        case ENCODER_CLICK:
-
-            state = STATE_READY;
-
-            display.clear();
-
-            display.print(0, 0, "Ready?");
-            display.print(0, 1, "Press = Start");
-
-            break;
-
-        case ENCODER_LONG_CLICK:
-
-            state = STATE_MENU;
-
-            menuManager.openMain();
-
-            display.drawMenu(
-                menuManager.currentMenu()->getTitle(),
-                menuManager.currentMenu()->getItem(
-                    menuManager.currentMenu()->getSelectedIndex()));
-
-            break;
-
-        default:
-            break;
-        }
-
-        if (state == STATE_MANUAL_WEIGHT)
-        {
-            char buffer[17];
-
-            sprintf(
-                buffer,
-                "Weight:%4d g",
-                settings.targetWeight);
-
-            display.print(0, 0, "Target Weight");
-            display.print(0, 1, buffer);
-        }
-
-        return;
-    }
-
-    // =========================================================
-    // READY SCREEN
-    // =========================================================
-
-    if (state == STATE_READY)
-    {
-        switch (event)
-        {
-        case ENCODER_CLICK:
-
-            state = STATE_RUNNING;
-
-            initialWeight = 1000;
-
-            simulatedWeight = initialWeight;
-
-            dryingStartTime = millis();
-            lastDryerUpdate = millis();
-            lastWeightUpdate = millis();
-
-            finishScreenShown = false;
-
-            dryer.start(settings.temperature);
-
-            display.clear();
-            display.print(0, 0, "Starting...");
-
-            delay(1000);
-
-            display.clear();
-
-            break;
-
-        case ENCODER_LONG_CLICK:
-
-            state = STATE_MANUAL_WEIGHT;
-
-            display.clear();
-
-            display.print(0, 0, "Target Weight");
-
-            {
-                char buffer[17];
-
-                sprintf(
-                    buffer,
-                    "Weight:%4d g",
-                    settings.targetWeight);
-
-                display.print(0, 1, buffer);
-            }
-
-            break;
-
-        default:
-            break;
-        }
-
-        return;
-    }
-
-    // =========================================================
-    // RUNNING SCREEN
-    // =========================================================
-
-    if (state == STATE_RUNNING)
+    // -------------------------------------------------
+    // Dryer update
+    // -------------------------------------------------
+
+    if (millis() - lastDryerUpdate >= 50)
     {
         dryer.update();
 
-        // Long press = stop and return to menu
-        if (event == ENCODER_LONG_CLICK)
-        {
-            state = STATE_MENU;
+        lastDryerUpdate =
+            millis();
+    }
 
-            menuManager.openMain();
+    // -------------------------------------------------
+    // Application state
+    // -------------------------------------------------
 
-            display.drawMenu(
-                menuManager.currentMenu()->getTitle(),
-                menuManager.currentMenu()->getItem(
-                    menuManager.currentMenu()->getSelectedIndex()));
+    switch (state)
+    {
+        case STATE_MENU:
 
-            return;
-        }
+            handleMenu(event);
 
-        unsigned long elapsed =
-            millis() - dryingStartTime;
+            break;
 
-        if (elapsed - lastDryerUpdate >= 1000)
-        {
-            lastDryerUpdate = millis();
+        case STATE_MANUAL_TEMP:
 
-            // ---------------------------------------------
-            // Time
-            // ---------------------------------------------
+            handleManualTemperature(event);
 
-            unsigned long elapsedSeconds =
-                elapsed / 1000;
+            break;
 
-            unsigned int minutes =
-                elapsedSeconds / 60;
+        case STATE_MANUAL_WEIGHT:
 
-            unsigned int seconds =
-                elapsedSeconds % 60;
+            handleManualWeight(event);
 
-            // ---------------------------------------------
-            // Simulate weight loss
-            // ---------------------------------------------
+            break;
 
-            if (simulatedWeight > settings.targetWeight)
-            {
-                if (simulatedWeight - settings.targetWeight >= 5)
-                {
-                    simulatedWeight -= 5;
-                }
-                else
-                {
-                    simulatedWeight =
-                        settings.targetWeight;
-                }
-            }
+        case STATE_READY:
 
-            // ---------------------------------------------
-            // Target reached
-            // ---------------------------------------------
+            handleReady(event);
 
-            if (simulatedWeight <= settings.targetWeight)
-            {
-                simulatedWeight =
-                    settings.targetWeight;
+            break;
 
-                dryer.stop();
+        case STATE_RUNNING:
 
-                state = STATE_FINISHED;
+            handleRunning(event);
 
-                Serial.println();
-                Serial.println("==============================");
-                Serial.println(" DRYING COMPLETE");
-                Serial.print(" Final Weight: ");
-                Serial.print(simulatedWeight);
-                Serial.println(" g");
-                Serial.println("==============================");
-            }
+            break;
 
-            // ---------------------------------------------
-            // Remaining time
-            // ---------------------------------------------
+        case STATE_PAUSED:
 
-            unsigned long estimatedRemainingSeconds = 0;
+            handlePaused(event);
 
-            unsigned int weightLost =
-                initialWeight - simulatedWeight;
+            break;
 
-            if (
-                weightLost > 0 &&
-                simulatedWeight > settings.targetWeight)
-            {
-                unsigned int remainingWeight =
-                    simulatedWeight - settings.targetWeight;
+        case STATE_FINISHED:
 
-                if (elapsedSeconds > 0)
-                {
-                    unsigned long rate =
-                        weightLost / elapsedSeconds;
+            handleFinished(event);
 
-                    if (rate > 0)
-                    {
-                        estimatedRemainingSeconds =
-                            remainingWeight / rate;
-                    }
-                }
-            }
+            break;
 
-            unsigned int remainingMinutes =
-                estimatedRemainingSeconds / 60;
+        case STATE_ERROR:
 
-            unsigned int remainingSeconds =
-                estimatedRemainingSeconds % 60;
+            handleError(event);
 
-            // ---------------------------------------------
-            // LCD
-            // ---------------------------------------------
+            break;
+    }
 
-            char line1[17];
-            char line2[17];
+    // -------------------------------------------------
+    // Heartbeat
+    // -------------------------------------------------
 
-            sprintf(
-                line1,
-                "T:%3dC W:%4dg",
-                settings.temperature,
-                simulatedWeight);
+    if (millis() - lastHeartbeat >= 5000)
+    {
+        Serial.println(
+            "[Application] System alive"
+        );
 
-            sprintf(
-                line2,
-                "Remain:%02u:%02u",
-                remainingMinutes,
-                remainingSeconds);
+        lastHeartbeat = millis();
+    }
+}
 
-            display.print(0, 0, line1);
-            display.print(0, 1, line2);
+// =====================================================
+// TEMPERATURE CONTROL
+// =====================================================
+/*
+void Application::updateTemperatureControl()
+{
+    float currentTemperature =
+        temperatureManager.getAverageTemperature();
 
-            // ---------------------------------------------
-            // Serial
-            // ---------------------------------------------
+    float hotTemperature =
+        temperatureManager.getHotTemperature();
 
-            Serial.print("Drying | Temp: ");
-            Serial.print(settings.temperature);
+    // -------------------------------------------------
+    // Safety
+    // -------------------------------------------------
 
-            Serial.print(" C | Weight: ");
-            Serial.print(simulatedWeight);
+    if (!isnan(hotTemperature) &&
+        hotTemperature >= 90.0f)
+    {
+        Serial.println();
+        Serial.println(
+            "!!! SAFETY TEMPERATURE LIMIT !!!"
+        );
 
-            Serial.print(" g | Time: ");
+        dryer.setHeaterPower(0);
+        dryer.stop();
 
-            if (minutes < 10)
-                Serial.print("0");
+        state = STATE_ERROR;
 
-            Serial.print(minutes);
-            Serial.print(":");
-
-            if (seconds < 10)
-                Serial.print("0");
-
-            Serial.print(seconds);
-
-            Serial.print(" | Remaining: ");
-
-            if (remainingMinutes < 10)
-                Serial.print("0");
-
-            Serial.print(remainingMinutes);
-            Serial.print(":");
-
-            if (remainingSeconds < 10)
-                Serial.print("0");
-
-            Serial.println(remainingSeconds);
-        }
+        drawErrorScreen();
 
         return;
     }
 
-    // =========================================================
-    // FINISHED
-    // =========================================================
+    // -------------------------------------------------
+    // Invalid chamber temperature
+    // -------------------------------------------------
 
-    if (state == STATE_FINISHED)
+    if (isnan(currentTemperature))
     {
-        if (!finishScreenShown)
-        {
-            finishScreenShown = true;
+        Serial.println(
+            "[CONTROL] Chamber temperature invalid"
+        );
 
-            display.clear();
-
-            display.center(0, "Drying");
-            display.center(1, "Complete!");
-
-            delay(2000);
-
-            display.clear();
-
-            char finalWeight[17];
-
-            sprintf(
-                finalWeight,
-                "Final:%4dg",
-                simulatedWeight);
-
-            display.center(0, "Finished");
-            display.center(1, finalWeight);
-        }
-
-        // Click = return to main menu
-        if (event == ENCODER_CLICK ||
-            event == ENCODER_LONG_CLICK)
-        {
-            state = STATE_MENU;
-
-            finishScreenShown = false;
-
-            menuManager.openMain();
-
-            display.drawMenu(
-                menuManager.currentMenu()->getTitle(),
-                menuManager.currentMenu()->getItem(
-                    menuManager.currentMenu()->getSelectedIndex()));
-        }
+        dryer.setHeaterPower(0);
 
         return;
     }
 
-    // =========================================================
-    // MENU NAVIGATION
-    // =========================================================
+    // -------------------------------------------------
+    // Calculate heater power
+    // -------------------------------------------------
 
-    switch (event)
+    uint8_t power =
+        calculateHeaterPower(
+            currentTemperature,
+            settings.temperature
+        );
+
+    dryer.setHeaterPower(power);
+}
+*/
+// =====================================================
+// CALCULATE HEATER POWER
+// =====================================================
+
+uint8_t Application::calculateHeaterPower(
+    float currentTemperature,
+    float targetTemperature
+)
+{
+    float difference =
+        targetTemperature - currentTemperature;
+
+    // -------------------------------------------------
+    // Already above target
+    // -------------------------------------------------
+
+    if (difference <= 0.0f)
     {
-    case ENCODER_LEFT:
+        return 0;
+    }
 
-        menuManager.currentMenu()->previous();
+    // -------------------------------------------------
+    // 10°C or more below target
+    // -------------------------------------------------
 
-        display.drawMenu(
-            menuManager.currentMenu()->getTitle(),
-            menuManager.currentMenu()->getItem(
-                menuManager.currentMenu()->getSelectedIndex()));
+    if (difference >= 10.0f)
+    {
+        return 100;
+    }
 
-        break;
+    // -------------------------------------------------
+    // 5°C below target
+    // -------------------------------------------------
 
-    case ENCODER_RIGHT:
+    if (difference >= 5.0f)
+    {
+        return 70;
+    }
 
-        menuManager.currentMenu()->next();
+    // -------------------------------------------------
+    // 2°C below target
+    // -------------------------------------------------
 
-        display.drawMenu(
-            menuManager.currentMenu()->getTitle(),
-            menuManager.currentMenu()->getItem(
-                menuManager.currentMenu()->getSelectedIndex()));
+    if (difference >= 2.0f)
+    {
+        return 40;
+    }
 
-        break;
+    // -------------------------------------------------
+    // Less than 2°C below target
+    // -------------------------------------------------
 
-        // =========================================================
-        // CLICK
-        // =========================================================
+    return 20;
+}
 
-    case ENCODER_CLICK:
+// =====================================================
+// MENU HANDLING
+// =====================================================
 
-        switch (
-            menuManager.currentMenu()->getSelectedAction())
-        {
-            // -----------------------------------------------------
-            // AUTO
-            // -----------------------------------------------------
+void Application::handleMenu(
+    EncoderEvent event
+)
+{
+    Menu* menu =
+        menuManager.currentMenu();
 
+    if (menu == nullptr)
+        return;
+
+    if (event == ENCODER_RIGHT)
+    {
+        menu->next();
+
+        drawCurrentMenu();
+    }
+
+    else if (event == ENCODER_LEFT)
+    {
+        menu->previous();
+
+        drawCurrentMenu();
+    }
+
+    else if (event == ENCODER_CLICK)
+    {
+        MenuAction action =
+            menu->getSelectedAction();
+
+        uint8_t parameter =
+            menu->getSelectedParameter();
+
+        handleMenuAction(
+            action,
+            parameter
+        );
+    }
+}
+
+// =====================================================
+// MENU ACTIONS
+// =====================================================
+
+void Application::handleMenuAction(
+    MenuAction action,
+    uint8_t parameter
+)
+{
+    switch (action)
+    {
         case ACTION_OPEN_RECIPES:
-
+        {
             settings.autoMode = true;
 
             menuManager.openRecipes();
 
-            display.drawMenu(
-                menuManager.currentMenu()->getTitle(),
-                menuManager.currentMenu()->getItem(
-                    menuManager.currentMenu()->getSelectedIndex()));
+            state = STATE_MENU;
+
+            drawCurrentMenu();
 
             break;
-
-            // -----------------------------------------------------
-            // MANUAL
-            // -----------------------------------------------------
+        }
 
         case ACTION_OPEN_MANUAL:
-
+        {
             settings.autoMode = false;
+
+            settings.temperature = 60;
+            settings.targetWeight = 1000;
 
             state = STATE_MANUAL_TEMP;
 
-            display.clear();
-
-            display.print(0, 0, "Manual Temp");
-
-            {
-                char buffer[17];
-
-                sprintf(
-                    buffer,
-                    "Temp: %2d C",
-                    settings.temperature);
-
-                display.print(0, 1, buffer);
-            }
+            drawManualTemperature();
 
             break;
-
-            // -----------------------------------------------------
-            // SELECT RECIPE
-            // -----------------------------------------------------
+        }
 
         case ACTION_START_RECIPE:
         {
-            uint8_t recipeID =
-                menuManager.currentMenu()
-                    ->getSelectedParameter();
+            settings.recipeID =
+                parameter;
 
-            settings.recipeID = recipeID;
+            const Recipe& recipe =
+                RecipeDatabase::getRecipe(
+                    settings.recipeID
+                );
+
+            settings.temperature =
+                recipe.temperature;
+
+            settings.targetWeight =
+                recipe.targetWeight;
+
             settings.autoMode = true;
 
-            const Recipe &recipe =
-                RecipeDatabase::getRecipe(recipeID);
-
             Serial.println();
-            Serial.println("==============================");
-            Serial.println(" AUTO RECIPE SELECTED");
-            Serial.println("==============================");
+            Serial.println(
+                "=============================="
+            );
+
+            Serial.println(
+                " RECIPE SELECTED"
+            );
+
+            Serial.println(
+                "=============================="
+            );
 
             Serial.print("Recipe: ");
             Serial.println(recipe.name);
@@ -656,130 +503,732 @@ void Application::update()
             Serial.print(recipe.temperature);
             Serial.println(" C");
 
-            Serial.print("Target Weight: ");
+            Serial.print("Target weight: ");
             Serial.print(recipe.targetWeight);
             Serial.println(" g");
 
-            Serial.println("==============================");
+            state = STATE_READY;
 
-            // Save recipe settings
-            settings.temperature =
-                recipe.temperature;
-
-            settings.targetWeight =
-                recipe.targetWeight;
-
-            // Open confirmation menu
-            menuManager.openConfirmation();
-
-            display.drawMenu(
-                menuManager.currentMenu()->getTitle(),
-                menuManager.currentMenu()->getItem(
-                    menuManager.currentMenu()->getSelectedIndex()));
+            drawReadyScreen();
 
             break;
         }
-
-            // -----------------------------------------------------
-            // CONFIRM RECIPE
-            // -----------------------------------------------------
 
         case ACTION_CONFIRM_RECIPE:
         {
-            const Recipe &recipe =
-                RecipeDatabase::getRecipe(
-                    settings.recipeID);
+            state = STATE_READY;
 
-            Serial.println();
-            Serial.println("==============================");
-            Serial.println(" RECIPE CONFIRMED");
-            Serial.println("==============================");
-
-            Serial.print("Recipe: ");
-            Serial.println(recipe.name);
-
-            Serial.print("Temperature: ");
-            Serial.print(recipe.temperature);
-            Serial.println(" C");
-
-            Serial.print("Target Weight: ");
-            Serial.print(recipe.targetWeight);
-            Serial.println(" g");
-
-            Serial.println("==============================");
-
-            // Use recipe settings
-            settings.temperature =
-                recipe.temperature;
-
-            settings.targetWeight =
-                recipe.targetWeight;
-
-            // Start drying
-            state = STATE_RUNNING;
-
-            initialWeight = 1000;
-            simulatedWeight = initialWeight;
-
-            dryingStartTime = millis();
-            lastDryerUpdate = millis();
-            lastWeightUpdate = millis();
-
-            finishScreenShown = false;
-
-            dryer.start(settings.temperature);
-
-            display.clear();
-            display.print(0, 0, "Starting...");
-
-            delay(1000);
-
-            display.clear();
+            drawReadyScreen();
 
             break;
         }
-
-            // -----------------------------------------------------
-            // CANCEL RECIPE
-            // -----------------------------------------------------
 
         case ACTION_CANCEL_RECIPE:
-
-            Serial.println("Recipe cancelled.");
-
+        {
             menuManager.openRecipes();
 
-            display.drawMenu(
-                menuManager.currentMenu()->getTitle(),
-                menuManager.currentMenu()->getItem(
-                    menuManager.currentMenu()->getSelectedIndex()));
+            state = STATE_MENU;
 
-            break;
+            drawCurrentMenu();
 
-        default:
             break;
         }
 
-        break;
+        case ACTION_NONE:
+        default:
+        {
+            break;
+        }
+    }
+}
 
-        // =========================================================
-        // LONG CLICK
-        // =========================================================
+// =====================================================
+// DRAW CURRENT MENU
+// =====================================================
 
-    case ENCODER_LONG_CLICK:
+void Application::drawCurrentMenu()
+{
+    Menu* menu =
+        menuManager.currentMenu();
+
+    if (menu == nullptr)
+        return;
+
+    display.drawMenu(
+        menu->getTitle(),
+        menu->getItem(
+            menu->getSelectedIndex()
+        )
+    );
+}
+
+// =====================================================
+// MANUAL TEMPERATURE
+// =====================================================
+
+void Application::handleManualTemperature(
+    EncoderEvent event
+)
+{
+    if (event == ENCODER_RIGHT)
+    {
+        if (settings.temperature < MAX_TEMP)
+        {
+            settings.temperature++;
+        }
+
+        drawManualTemperature();
+    }
+
+    else if (event == ENCODER_LEFT)
+    {
+        if (settings.temperature > MIN_TEMP)
+        {
+            settings.temperature--;
+        }
+
+        drawManualTemperature();
+    }
+
+    else if (event == ENCODER_CLICK)
+    {
+        state = STATE_MANUAL_WEIGHT;
+
+        drawManualWeight();
+    }
+
+    else if (event == ENCODER_LONG_CLICK)
+    {
+        menuManager.openMain();
 
         state = STATE_MENU;
 
+        drawCurrentMenu();
+    }
+}
+
+// =====================================================
+// MANUAL TEMPERATURE SCREEN
+// =====================================================
+
+void Application::drawManualTemperature()
+{
+    char line[17];
+
+    display.clear();
+
+    display.print(
+        0,
+        0,
+        "Set Temperature"
+    );
+
+    snprintf(
+        line,
+        sizeof(line),
+        "%3u C  < >",
+        settings.temperature
+    );
+
+    display.print(
+        0,
+        1,
+        line
+    );
+}
+
+// =====================================================
+// MANUAL WEIGHT
+// =====================================================
+
+void Application::handleManualWeight(
+    EncoderEvent event
+)
+{
+    if (event == ENCODER_RIGHT)
+    {
+        if (settings.targetWeight < MAX_WEIGHT)
+        {
+            settings.targetWeight += 100;
+        }
+
+        drawManualWeight();
+    }
+
+    else if (event == ENCODER_LEFT)
+    {
+        if (settings.targetWeight > MIN_WEIGHT)
+        {
+            settings.targetWeight -= 100;
+        }
+
+        drawManualWeight();
+    }
+
+    else if (event == ENCODER_CLICK)
+    {
+        state = STATE_READY;
+
+        drawReadyScreen();
+    }
+
+    else if (event == ENCODER_LONG_CLICK)
+    {
+        state = STATE_MANUAL_TEMP;
+
+        drawManualTemperature();
+    }
+}
+
+// =====================================================
+// MANUAL WEIGHT SCREEN
+// =====================================================
+
+void Application::drawManualWeight()
+{
+    char line[17];
+
+    display.clear();
+
+    display.print(
+        0,
+        0,
+        "Target Weight"
+    );
+
+    snprintf(
+        line,
+        sizeof(line),
+        "%4u g  < >",
+        settings.targetWeight
+    );
+
+    display.print(
+        0,
+        1,
+        line
+    );
+}
+
+// =====================================================
+// READY
+// =====================================================
+
+void Application::handleReady(
+    EncoderEvent event
+)
+{
+    if (event == ENCODER_CLICK)
+    {
+        Serial.println();
+        Serial.println(
+            "=============================="
+        );
+
+        Serial.println(
+            " STARTING DRYING"
+        );
+
+        Serial.println(
+            "=============================="
+        );
+
+        Serial.print("Temperature: ");
+        Serial.print(settings.temperature);
+        Serial.println(" C");
+
+        if (settings.autoMode)
+        {
+            const Recipe& recipe =
+                RecipeDatabase::getRecipe(
+                    settings.recipeID
+                );
+
+            Serial.print("Recipe: ");
+            Serial.println(recipe.name);
+        }
+        else
+        {
+            Serial.println("Mode: MANUAL");
+        }
+
+        dryer.start(
+            settings.temperature);
+
+        heaterEnabled = true;
+
+        dryingStartTime =
+            millis();
+
+        finishScreenShown = false;
+
+        lastDisplayUpdate =
+            millis();
+
+        state = STATE_RUNNING;
+
+        drawRunningScreen();
+    }
+
+    else if (event == ENCODER_LONG_CLICK)
+    {
         menuManager.openMain();
 
-        display.drawMenu(
-            menuManager.currentMenu()->getTitle(),
-            menuManager.currentMenu()->getItem(
-                menuManager.currentMenu()->getSelectedIndex()));
+        state = STATE_MENU;
 
-        break;
+        drawCurrentMenu();
+    }
+}
 
-    default:
-        break;
+// =====================================================
+// READY SCREEN
+// =====================================================
+
+void Application::drawReadyScreen()
+{
+    char line[17];
+
+    display.clear();
+
+    if (settings.autoMode)
+    {
+        const Recipe& recipe =
+            RecipeDatabase::getRecipe(
+                settings.recipeID
+            );
+
+        display.print(
+            0,
+            0,
+            recipe.name
+        );
+    }
+    else
+    {
+        display.print(
+            0,
+            0,
+            "Manual Ready"
+        );
+    }
+
+    snprintf(
+        line,
+        sizeof(line),
+        "%uC  Click=Start",
+        settings.temperature
+    );
+
+    display.print(
+        0,
+        1,
+        line
+    );
+}
+
+// =====================================================
+// RUNNING
+// =====================================================
+
+void Application::handleRunning(
+    EncoderEvent event
+)
+{
+    // -------------------------------------------------
+    // Long click = stop
+    // -------------------------------------------------
+
+    if (event == ENCODER_LONG_CLICK)
+    {
+        dryer.stop();
+
+        heaterEnabled = false;
+
+        state = STATE_FINISHED;
+
+        finishScreenShown = false;
+
+        drawFinishedScreen();
+
+        return;
+    }
+
+    // -------------------------------------------------
+    // Click = pause
+    // -------------------------------------------------
+
+    if (event == ENCODER_CLICK)
+    {
+        dryer.stop();
+
+        heaterEnabled = false;
+
+        state = STATE_PAUSED;
+
+        drawPausedScreen();
+
+        return;
+    }
+
+    // -------------------------------------------------
+    // Temperature control
+    // -------------------------------------------------
+
+    updateTemperatureControl();
+
+    if (state != STATE_RUNNING)
+        return;
+
+    // -------------------------------------------------
+    // LCD update
+    // -------------------------------------------------
+
+    if (millis() - lastDisplayUpdate >= 500)
+    {
+        drawRunningScreen();
+
+        lastDisplayUpdate =
+            millis();
+    }
+}
+
+// =====================================================
+// RUNNING SCREEN
+// =====================================================
+
+void Application::drawRunningScreen()
+{
+    static float lastAverage = NAN;
+    static float lastHot = NAN;
+    static uint8_t lastPower = 255;
+    static bool firstDraw = true;
+
+    float average =
+        temperatureManager.getAverageTemperature();
+
+    float hot =
+        temperatureManager.getHotTemperature();
+
+    uint8_t power =
+        dryer.getHeaterPower();
+
+    bool averageChanged =
+        (isnan(average) != isnan(lastAverage)) ||
+        (!isnan(average) &&
+         !isnan(lastAverage) &&
+         fabs(average - lastAverage) >= 0.1f);
+
+    bool hotChanged =
+        (isnan(hot) != isnan(lastHot)) ||
+        (!isnan(hot) &&
+         !isnan(lastHot) &&
+         fabs(hot - lastHot) >= 0.1f);
+
+    bool powerChanged =
+        power != lastPower;
+
+    if (!firstDraw &&
+        !averageChanged &&
+        !hotChanged &&
+        !powerChanged)
+    {
+        return;
+    }
+
+    firstDraw = false;
+
+    lastAverage = average;
+    lastHot = hot;
+    lastPower = power;
+
+    char line1[17];
+    char line2[17];
+
+    if (isnan(average))
+    {
+        snprintf(
+            line1,
+            sizeof(line1),
+            "AVG: --.- C"
+        );
+    }
+    else
+    {
+        snprintf(
+            line2,
+            sizeof(line2),
+            "HOT:%5.1f C",
+            hot);
+    }
+
+    if (isnan(hot))
+    {
+        snprintf(
+            line2,
+            sizeof(line2),
+            "HOT: --.- C"
+        );
+    }
+    else
+    {
+        snprintf(
+            line2,
+            sizeof(line2),
+            "HOT:%5.1f C",
+            hot
+        );
+    }
+
+    display.print(
+        0,
+        0,
+        line1
+    );
+
+    display.print(
+        0,
+        1,
+        line2
+    );
+}
+
+// =====================================================
+// PAUSED
+// =====================================================
+
+void Application::handlePaused(
+    EncoderEvent event
+)
+{
+    if (event == ENCODER_CLICK)
+    {
+        Serial.println(
+            "Resuming dryer..."
+        );
+
+        dryer.start(
+            settings.temperature);
+
+        heaterEnabled = true;
+
+        state = STATE_RUNNING;
+
+        drawRunningScreen();
+    }
+
+    else if (event == ENCODER_LONG_CLICK)
+    {
+        Serial.println(
+            "Drying cancelled."
+        );
+
+        dryer.stop();
+
+        menuManager.openMain();
+
+        state = STATE_MENU;
+
+        drawCurrentMenu();
+    }
+}
+
+// =====================================================
+// PAUSED SCREEN
+// =====================================================
+
+void Application::drawPausedScreen()
+{
+    display.clear();
+
+    display.print(
+        0,
+        0,
+        "DRYER PAUSED"
+    );
+
+    display.print(
+        0,
+        1,
+        "Click=Resume"
+    );
+}
+
+// =====================================================
+// FINISHED
+// =====================================================
+
+void Application::handleFinished(
+    EncoderEvent event
+)
+{
+    if (!finishScreenShown)
+    {
+        drawFinishedScreen();
+
+        finishScreenShown = true;
+    }
+
+    if (event == ENCODER_CLICK ||
+        event == ENCODER_LONG_CLICK)
+    {
+        menuManager.openMain();
+
+        state = STATE_MENU;
+
+        finishScreenShown = false;
+
+        drawCurrentMenu();
+    }
+}
+
+// =====================================================
+// FINISHED SCREEN
+// =====================================================
+
+void Application::drawFinishedScreen()
+{
+    display.clear();
+
+    display.print(
+        0,
+        0,
+        "Drying Finished"
+    );
+
+    display.print(
+        0,
+        1,
+        "Click = Menu"
+    );
+}
+
+// =====================================================
+// ERROR
+// =====================================================
+
+void Application::handleError(
+    EncoderEvent event
+)
+{
+    if (dryer.isRunning())
+    {
+        dryer.stop();
+    }
+
+    if (event == ENCODER_CLICK ||
+        event == ENCODER_LONG_CLICK)
+    {
+        menuManager.openMain();
+
+        state = STATE_MENU;
+
+        drawCurrentMenu();
+    }
+}
+
+// =====================================================
+// ERROR SCREEN
+// =====================================================
+
+void Application::drawErrorScreen()
+{
+    display.clear();
+
+    display.print(
+        0,
+        0,
+        "TEMP ERROR!"
+    );
+
+    display.print(
+        0,
+        1,
+        "Click = Menu"
+    );
+}
+// =====================================================
+// TEMPERATURE CONTROL
+// =====================================================
+
+void Application::updateTemperatureControl()
+{
+    if (!dryer.isRunning())
+        return;
+
+    float chamberTemperature =
+        temperatureManager.getAverageTemperature();
+
+    float safetyTemperature =
+        temperatureManager.getHotTemperature();
+
+    // -------------------------------------------------
+    // SAFETY CHECK
+    // -------------------------------------------------
+
+    if (!isnan(safetyTemperature) &&
+        safetyTemperature >= MAX_SAFE_TEMP)
+    {
+        Serial.println();
+        Serial.println("==============================");
+        Serial.println(" !!! SAFETY SHUTDOWN !!!");
+        Serial.println("==============================");
+
+        Serial.print("MAX6675 Temperature: ");
+        Serial.print(safetyTemperature);
+        Serial.println(" C");
+
+        dryer.stop();
+
+        heaterEnabled = false;
+
+        state = STATE_ERROR;
+
+        drawErrorScreen();
+
+        return;
+    }
+
+    // -------------------------------------------------
+    // No valid chamber temperature
+    // -------------------------------------------------
+
+    if (isnan(chamberTemperature))
+    {
+        return;
+    }
+
+    // -------------------------------------------------
+    // HEATER CONTROL
+    // -------------------------------------------------
+
+    float targetTemperature =
+        settings.temperature;
+
+    // Heater OFF when target is reached
+    if (heaterEnabled &&
+        chamberTemperature >= targetTemperature)
+    {
+        dryer.heaterOff();
+
+        heaterEnabled = false;
+
+        Serial.print("[CONTROL] Heater OFF | Chamber: ");
+        Serial.print(chamberTemperature);
+        Serial.println(" C");
+    }
+
+    // Heater ON when temperature falls below
+    // target - hysteresis
+    else if (!heaterEnabled &&
+             chamberTemperature <=
+             targetTemperature - TEMP_HYSTERESIS)
+    {
+        dryer.heaterOn();
+
+        heaterEnabled = true;
+
+        Serial.print("[CONTROL] Heater ON | Chamber: ");
+        Serial.print(chamberTemperature);
+        Serial.println(" C");
     }
 }

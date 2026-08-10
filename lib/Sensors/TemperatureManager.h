@@ -4,7 +4,7 @@
 #include <Arduino.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
-#include <max6675.h>
+#include <MAX6675.h>
 
 #include "TemperatureFilter.h"
 
@@ -22,14 +22,18 @@ public:
     void begin();
     void update();
 
+    // Individual filtered DS18B20 temperatures
     float getSensor1Temperature() const;
     float getSensor2Temperature() const;
     float getSensor3Temperature() const;
 
+    // Filtered chamber average
     float getAverageTemperature() const;
 
+    // Filtered MAX6675 temperature
     float getHotTemperature() const;
 
+    // Number of detected DS18B20 sensors
     uint8_t getSensorCount() const;
 
 private:
@@ -41,26 +45,27 @@ private:
     OneWire oneWire;
     DallasTemperature ds18b20;
 
+    uint8_t sensorCount;
+
+    unsigned long lastDS18B20Request;
+    bool ds18b20ConversionStarted;
+
     float sensor1Temperature;
     float sensor2Temperature;
     float sensor3Temperature;
 
     float averageTemperature;
 
-    uint8_t sensorCount;
-
-
     // =====================================================
-    // MAX6675 + K-Type
+    // MAX6675
     // =====================================================
 
     MAX6675 thermocouple;
 
     float hotTemperature;
 
-
     // =====================================================
-    // Temperature Filters
+    // FILTERS
     // =====================================================
 
     TemperatureFilter sensor1Filter;

@@ -1,8 +1,10 @@
 #include "Encoder.h"
 
-Encoder::Encoder(uint8_t clk,
-                 uint8_t dt,
-                 uint8_t sw)
+Encoder::Encoder(
+    uint8_t clk,
+    uint8_t dt,
+    uint8_t sw
+)
 {
     clkPin = clk;
     dtPin = dt;
@@ -27,18 +29,29 @@ void Encoder::update()
 {
     event = ENCODER_NONE;
 
+    // =================================================
+    // ROTARY ENCODER
+    // =================================================
+
     bool currentCLK = digitalRead(clkPin);
 
-    // Detect only the falling edge of CLK
     if (lastCLK == HIGH && currentCLK == LOW)
     {
         if (digitalRead(dtPin) == HIGH)
+        {
             event = ENCODER_RIGHT;
+        }
         else
+        {
             event = ENCODER_LEFT;
+        }
     }
 
     lastCLK = currentCLK;
+
+    // =================================================
+    // BUTTON
+    // =================================================
 
     bool currentButton = digitalRead(swPin);
 
@@ -50,9 +63,13 @@ void Encoder::update()
     if (currentButton && !lastButton)
     {
         if (millis() - pressTime > 1000)
+        {
             event = ENCODER_LONG_CLICK;
+        }
         else
+        {
             event = ENCODER_CLICK;
+        }
     }
 
     lastButton = currentButton;
@@ -60,9 +77,9 @@ void Encoder::update()
 
 EncoderEvent Encoder::getEvent()
 {
-    EncoderEvent e = event;
+    EncoderEvent currentEvent = event;
 
     event = ENCODER_NONE;
 
-    return e;
+    return currentEvent;
 }

@@ -18,53 +18,65 @@ void Display::clear()
     lcd.clear();
 }
 
-void Display::print(uint8_t col,
-                    uint8_t row,
-                    const char* text)
+void Display::print(
+    uint8_t col,
+    uint8_t row,
+    const char* text)
 {
     lcd.setCursor(col, row);
     lcd.print(text);
 }
 
-void Display::center(uint8_t row,
-                     const char* text)
+void Display::center(
+    uint8_t row,
+    const char* text)
 {
     uint8_t len = strlen(text);
 
     uint8_t col = 0;
 
     if (len < 16)
+    {
         col = (16 - len) / 2;
+    }
 
     lcd.setCursor(col, row);
     lcd.print(text);
 }
-void Display::drawMenu(const char* title, const char* selectedItem)
+
+// =====================================================
+// MENU
+// =====================================================
+
+void Display::drawMenu(
+    const char* title,
+    const char* selectedItem)
 {
     drawTitle(title);
     drawSelectedItem(selectedItem);
 }
+
 void Display::drawTitle(const char* title)
 {
-    lcd.setCursor(0,0);
+    lcd.setCursor(0, 0);
 
-    lcd.print("                ");   // Clear row
+    // Clear row
+    lcd.print("                ");
 
-    lcd.setCursor(0,0);
-
+    lcd.setCursor(0, 0);
     lcd.print(title);
 }
+
 void Display::drawSelectedItem(const char* item)
 {
-    lcd.setCursor(0,1);
+    lcd.setCursor(0, 1);
 
-    lcd.print("                ");   // Clear row
+    // Clear row
+    lcd.print("                ");
 
-    lcd.setCursor(0,1);
+    lcd.setCursor(0, 1);
 
     lcd.write('>');
-
     lcd.print(' ');
-
     lcd.print(item);
 }

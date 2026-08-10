@@ -14,15 +14,30 @@ public:
 
     void clear();
 
-    void print(uint8_t col,
-               uint8_t row,
-               const char* text);
+    void print(
+        uint8_t col,
+        uint8_t row,
+        const char* text
+    );
 
-    void center(uint8_t row,
-                const char* text);
-    void drawMenu(const char* title, const char* selectedItem);
-    void drawTitle(const char* title);
-    void drawSelectedItem(const char* item);
+    void center(
+        uint8_t row,
+        const char* text
+    );
+
+    void drawMenu(
+        const char* title,
+        const char* selectedItem
+    );
+
+    void drawTitle(
+        const char* title
+    );
+
+    void drawSelectedItem(
+        const char* item
+    );
+
 private:
 
     LiquidCrystal_I2C lcd;

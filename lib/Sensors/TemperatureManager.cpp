@@ -1,4 +1,9 @@
 #include "TemperatureManager.h"
+#include <math.h>
+
+// =========================================================
+// CONSTRUCTOR
+// =========================================================
 
 TemperatureManager::TemperatureManager(
     uint8_t oneWirePin,
@@ -8,19 +13,17 @@ TemperatureManager::TemperatureManager(
 )
     : oneWire(oneWirePin),
       ds18b20(&oneWire),
-      thermocouple(thermoCLK, thermoCS, thermoDO)
+      thermocouple(thermoCLK, thermoCS, thermoDO),
+      sensorCount(0),
+      lastDS18B20Request(0),
+      ds18b20ConversionStarted(false),
+      sensor1Temperature(NAN),
+      sensor2Temperature(NAN),
+      sensor3Temperature(NAN),
+      averageTemperature(NAN),
+      hotTemperature(NAN)
 {
-    sensor1Temperature = NAN;
-    sensor2Temperature = NAN;
-    sensor3Temperature = NAN;
-
-    averageTemperature = NAN;
-
-    sensorCount = 0;
-
-    hotTemperature = NAN;
 }
-
 
 // =========================================================
 // BEGIN
@@ -34,21 +37,37 @@ void TemperatureManager::begin()
 
     ds18b20.begin();
 
-    sensorCount = ds18b20.getDeviceCount();
+    // IMPORTANT:
+    // Do not block the application while waiting
+    // for the DS18B20 conversion.
+    ds18b20.setWaitForConversion(false);
 
-    Serial.print("DS18B20 sensors found: ");
+    sensorCount =
+        ds18b20.getDeviceCount();
+
+    Serial.print(
+        "DS18B20 sensors found: "
+    );
+
     Serial.println(sensorCount);
 
-    delay(500);
+    // Start first conversion
+    ds18b20.requestTemperatures();
 
+    lastDS18B20Request = millis();
+
+    ds18b20ConversionStarted = true;
 
     // =====================================================
     // MAX6675
     // =====================================================
 
-    hotTemperature = thermocouple.readCelsius();
+    hotTemperature =
+        thermocouple.readCelsius();
 
-    Serial.print("MAX6675 Temperature: ");
+    Serial.print(
+        "MAX6675 Temperature: "
+    );
 
     if (isnan(hotTemperature))
     {
@@ -61,7 +80,6 @@ void TemperatureManager::begin()
     }
 }
 
-
 // =========================================================
 // UPDATE
 // =========================================================
@@ -69,104 +87,165 @@ void TemperatureManager::begin()
 void TemperatureManager::update()
 {
     // =====================================================
-    // Request DS18B20 measurements
+    // DS18B20
     // =====================================================
 
-    ds18b20.requestTemperatures();
+    /*
+     * DS18B20 conversion takes time.
+     *
+     * We start the conversion and return immediately.
+     * On a later update, after enough time has passed,
+     * we read the result and start the next conversion.
+     */
 
-
-    // =====================================================
-    // Read RAW DS18B20 values
-    // =====================================================
-
-    float rawSensor1 = NAN;
-    float rawSensor2 = NAN;
-    float rawSensor3 = NAN;
-
-
-    if (sensorCount >= 1)
+    if (ds18b20ConversionStarted)
     {
-        rawSensor1 =
-            ds18b20.getTempCByIndex(0);
-    }
+        // 750 ms is the worst-case conversion time
+        // for a 12-bit DS18B20.
+        if (millis() - lastDS18B20Request >= 750)
+        {
+            // ---------------------------------------------
+            // Read completed conversion
+            // ---------------------------------------------
 
-    if (sensorCount >= 2)
-    {
-        rawSensor2 =
-            ds18b20.getTempCByIndex(1);
-    }
+            float rawSensor1 = NAN;
+            float rawSensor2 = NAN;
+            float rawSensor3 = NAN;
 
-    if (sensorCount >= 3)
-    {
-        rawSensor3 =
-            ds18b20.getTempCByIndex(2);
-    }
+            if (sensorCount >= 1)
+            {
+                rawSensor1 =
+                    ds18b20.getTempCByIndex(0);
+            }
 
+            if (sensorCount >= 2)
+            {
+                rawSensor2 =
+                    ds18b20.getTempCByIndex(1);
+            }
 
-    // =====================================================
-    // Filter DS18B20 sensors
-    // =====================================================
+            if (sensorCount >= 3)
+            {
+                rawSensor3 =
+                    ds18b20.getTempCByIndex(2);
+            }
 
-    if (!isnan(rawSensor1))
-    {
-        sensor1Temperature =
-            sensor1Filter.update(rawSensor1);
-    }
+            // ---------------------------------------------
+            // Validate
+            // ---------------------------------------------
 
-    if (!isnan(rawSensor2))
-    {
-        sensor2Temperature =
-            sensor2Filter.update(rawSensor2);
-    }
+            if (rawSensor1 == DEVICE_DISCONNECTED_C)
+            {
+                rawSensor1 = NAN;
+            }
 
-    if (!isnan(rawSensor3))
-    {
-        sensor3Temperature =
-            sensor3Filter.update(rawSensor3);
-    }
+            if (rawSensor2 == DEVICE_DISCONNECTED_C)
+            {
+                rawSensor2 = NAN;
+            }
 
+            if (rawSensor3 == DEVICE_DISCONNECTED_C)
+            {
+                rawSensor3 = NAN;
+            }
 
-    // =====================================================
-    // Calculate average from FILTERED sensors
-    // =====================================================
+            // ---------------------------------------------
+            // Filter DS18B20 sensors
+            // ---------------------------------------------
 
-    float totalTemperature = 0.0f;
+            if (!isnan(rawSensor1))
+            {
+                sensor1Temperature =
+                    sensor1Filter.update(
+                        rawSensor1
+                    );
+            }
 
-    uint8_t validSensors = 0;
+            if (!isnan(rawSensor2))
+            {
+                sensor2Temperature =
+                    sensor2Filter.update(
+                        rawSensor2
+                    );
+            }
 
+            if (!isnan(rawSensor3))
+            {
+                sensor3Temperature =
+                    sensor3Filter.update(
+                        rawSensor3
+                    );
+            }
 
-    if (!isnan(sensor1Temperature))
-    {
-        totalTemperature += sensor1Temperature;
-        validSensors++;
-    }
+            // ---------------------------------------------
+            // Calculate filtered average
+            // ---------------------------------------------
 
-    if (!isnan(sensor2Temperature))
-    {
-        totalTemperature += sensor2Temperature;
-        validSensors++;
-    }
+            float totalTemperature = 0.0f;
 
-    if (!isnan(sensor3Temperature))
-    {
-        totalTemperature += sensor3Temperature;
-        validSensors++;
-    }
+            uint8_t validSensors = 0;
 
+            if (!isnan(sensor1Temperature))
+            {
+                totalTemperature +=
+                    sensor1Temperature;
 
-    if (validSensors > 0)
-    {
-        float rawAverage =
-            totalTemperature / validSensors;
+                validSensors++;
+            }
 
-        averageTemperature =
-            averageFilter.update(rawAverage);
+            if (!isnan(sensor2Temperature))
+            {
+                totalTemperature +=
+                    sensor2Temperature;
+
+                validSensors++;
+            }
+
+            if (!isnan(sensor3Temperature))
+            {
+                totalTemperature +=
+                    sensor3Temperature;
+
+                validSensors++;
+            }
+
+            if (validSensors > 0)
+            {
+                float rawAverage =
+                    totalTemperature /
+                    validSensors;
+
+                averageTemperature =
+                    averageFilter.update(
+                        rawAverage
+                    );
+            }
+            else
+            {
+                averageTemperature = NAN;
+            }
+
+            // ---------------------------------------------
+            // Start next DS18B20 conversion
+            // ---------------------------------------------
+
+            ds18b20.requestTemperatures();
+
+            lastDS18B20Request =
+                millis();
+        }
     }
     else
     {
-        averageTemperature = NAN;
-    }
+        // Safety fallback
+        ds18b20.requestTemperatures();
 
+        lastDS18B20Request =
+            millis();
+
+        ds18b20ConversionStarted =
+            true;
+    }
 
     // =====================================================
     // MAX6675
@@ -175,43 +254,56 @@ void TemperatureManager::update()
     float rawHotTemperature =
         thermocouple.readCelsius();
 
-
-    // =====================================================
-    // Filter MAX6675
-    // =====================================================
-
     if (!isnan(rawHotTemperature))
     {
         hotTemperature =
-            hotFilter.update(rawHotTemperature);
+            hotFilter.update(
+                rawHotTemperature
+            );
     }
 
-
     // =====================================================
-    // Serial diagnostics
+    // SERIAL DIAGNOSTICS
     // =====================================================
 
-    Serial.print("DS18B20 Count: ");
+    Serial.print(
+        "DS18B20 Count: "
+    );
+
     Serial.print(sensorCount);
 
-    Serial.print(" | S1: ");
+    Serial.print(
+        " | S1: "
+    );
+
     Serial.print(sensor1Temperature);
 
-    Serial.print(" C | S2: ");
+    Serial.print(
+        " C | S2: "
+    );
+
     Serial.print(sensor2Temperature);
 
-    Serial.print(" C | S3: ");
+    Serial.print(
+        " C | S3: "
+    );
+
     Serial.print(sensor3Temperature);
 
-    Serial.print(" C | AVG: ");
+    Serial.print(
+        " C | AVG: "
+    );
+
     Serial.print(averageTemperature);
 
-    Serial.print(" C | HOT: ");
+    Serial.print(
+        " C | HOT: "
+    );
+
     Serial.print(hotTemperature);
 
     Serial.println(" C");
 }
-
 
 // =========================================================
 // GETTERS
@@ -222,30 +314,25 @@ float TemperatureManager::getSensor1Temperature() const
     return sensor1Temperature;
 }
 
-
 float TemperatureManager::getSensor2Temperature() const
 {
     return sensor2Temperature;
 }
-
 
 float TemperatureManager::getSensor3Temperature() const
 {
     return sensor3Temperature;
 }
 
-
 float TemperatureManager::getAverageTemperature() const
 {
     return averageTemperature;
 }
 
-
 float TemperatureManager::getHotTemperature() const
 {
     return hotTemperature;
 }
-
 
 uint8_t TemperatureManager::getSensorCount() const
 {
