@@ -949,8 +949,23 @@ void Application::drawRunningScreen()
         snprintf(
             line1,
             sizeof(line1),
-            "AVG: --.- C"
-        );
+            "AVG: --.- C");
+    }
+    else
+    {
+        snprintf(
+            line1,
+            sizeof(line1),
+            "AVG:%5.1f C",
+            average);
+    }
+
+    if (isnan(hot))
+    {
+        snprintf(
+            line2,
+            sizeof(line2),
+            "HOT: --.- C");
     }
     else
     {
@@ -959,24 +974,6 @@ void Application::drawRunningScreen()
             sizeof(line2),
             "HOT:%5.1f C",
             hot);
-    }
-
-    if (isnan(hot))
-    {
-        snprintf(
-            line2,
-            sizeof(line2),
-            "HOT: --.- C"
-        );
-    }
-    else
-    {
-        snprintf(
-            line2,
-            sizeof(line2),
-            "HOT:%5.1f C",
-            hot
-        );
     }
 
     display.print(
