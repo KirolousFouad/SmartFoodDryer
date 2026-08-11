@@ -1,14 +1,47 @@
 #ifndef APPLICATION_H
 #define APPLICATION_H
 
+#include <Arduino.h>
+
+#include "Config.h"
 #include "Display.h"
 #include "Encoder.h"
-#include "Menu.h"
 #include "MenuManager.h"
-#include "SystemState.h"
-#include "DryerSettings.h"
 #include "Dryer.h"
+#include "SCRController.h"
 #include "TemperatureManager.h"
+#include "RecipeDatabase.h"
+#include "DryerSettings.h"
+
+// =====================================================
+// SAFETY
+// =====================================================
+
+constexpr float MAX_SAFE_TEMP = 120.0f;
+
+// =====================================================
+// APPLICATION STATES
+// =====================================================
+
+enum ApplicationState
+{
+    STATE_MENU,
+
+    STATE_MANUAL_TEMP,
+    STATE_MANUAL_WEIGHT,
+
+    STATE_READY,
+
+    STATE_RUNNING,
+    STATE_PAUSED,
+
+    STATE_FINISHED,
+    STATE_ERROR
+};
+
+// =====================================================
+// APPLICATION
+// =====================================================
 
 class Application
 {
@@ -21,59 +54,77 @@ public:
 
 private:
 
-    // =====================================================
-    // Hardware / Modules
-    // =====================================================
+    // =================================================
+    // HARDWARE / MODULES
+    // =================================================
 
     Display display;
+
     Encoder encoder;
+
     MenuManager menuManager;
 
     Dryer dryer;
+
+    SCRController scr;
+
     TemperatureManager temperatureManager;
 
-    // =====================================================
-    // System
-    // =====================================================
+    // =================================================
+    // SETTINGS
+    // =================================================
 
-    SystemState state;
     DryerSettings settings;
 
-    // =====================================================
-    // Timers
-    // =====================================================
+    // =================================================
+    // STATE
+    // =================================================
+
+    ApplicationState state;
+
+    // =================================================
+    // TIMERS
+    // =================================================
 
     unsigned long lastHeartbeat;
+
     unsigned long dryingStartTime;
+
     unsigned long lastDryerUpdate;
+
     unsigned long lastDisplayUpdate;
+
     unsigned long lastTemperatureControl;
 
-    // =====================================================
-    // Temperature Control
-    // =====================================================
+    unsigned long targetReachedStartTime;
+
+    unsigned long lastSCRPulse;
+
+    // =================================================
+    // FLAGS
+    // =================================================
 
     bool heaterEnabled;
 
-    static constexpr float TEMP_HYSTERESIS = 1.0f;
-    static constexpr float MAX_SAFE_TEMP = 90.0f;
-
-    void updateTemperatureControl();
-
-    uint8_t calculateHeaterPower(
-        float currentTemperature,
-        float targetTemperature
-    );
-
-    // =====================================================
-    // UI
-    // =====================================================
-
     bool finishScreenShown;
 
-    // =====================================================
-    // Menu
-    // =====================================================
+    bool targetReached;
+
+    // =================================================
+    // SCR CONTROL
+    // =================================================
+
+    uint8_t currentSoftwarePower;
+
+    uint8_t targetSoftwarePower;
+
+    bool scrResetInProgress;
+
+    uint8_t scrResetStepsRemaining;
+
+    // =================================================
+    // MENU
+    // =================================================
 
     void handleMenu(
         EncoderEvent event
@@ -86,9 +137,9 @@ private:
 
     void drawCurrentMenu();
 
-    // =====================================================
-    // Manual Temperature
-    // =====================================================
+    // =================================================
+    // MANUAL TEMPERATURE
+    // =================================================
 
     void handleManualTemperature(
         EncoderEvent event
@@ -96,9 +147,9 @@ private:
 
     void drawManualTemperature();
 
-    // =====================================================
-    // Manual Weight
-    // =====================================================
+    // =================================================
+    // MANUAL WEIGHT
+    // =================================================
 
     void handleManualWeight(
         EncoderEvent event
@@ -106,9 +157,9 @@ private:
 
     void drawManualWeight();
 
-    // =====================================================
-    // Ready
-    // =====================================================
+    // =================================================
+    // READY
+    // =================================================
 
     void handleReady(
         EncoderEvent event
@@ -116,9 +167,9 @@ private:
 
     void drawReadyScreen();
 
-    // =====================================================
-    // Running
-    // =====================================================
+    // =================================================
+    // RUNNING
+    // =================================================
 
     void handleRunning(
         EncoderEvent event
@@ -126,9 +177,9 @@ private:
 
     void drawRunningScreen();
 
-    // =====================================================
-    // Paused
-    // =====================================================
+    // =================================================
+    // PAUSED
+    // =================================================
 
     void handlePaused(
         EncoderEvent event
@@ -136,9 +187,9 @@ private:
 
     void drawPausedScreen();
 
-    // =====================================================
-    // Finished
-    // =====================================================
+    // =================================================
+    // FINISHED
+    // =================================================
 
     void handleFinished(
         EncoderEvent event
@@ -146,15 +197,45 @@ private:
 
     void drawFinishedScreen();
 
-    // =====================================================
-    // Error
-    // =====================================================
+    // =================================================
+    // ERROR
+    // =================================================
 
     void handleError(
         EncoderEvent event
     );
 
     void drawErrorScreen();
+
+    // =================================================
+    // TEMPERATURE CONTROL
+    // =================================================
+
+    void updateTemperatureControl();
+
+    uint8_t calculateHeaterPower(
+        float currentTemperature,
+        float targetTemperature
+    );
+
+    void checkTargetTemperatureHold();
+
+    // =================================================
+    // SCR CONTROL
+    // =================================================
+
+    void updateSCRControl();
+
+    void increaseSCRPulse();
+
+    void decreaseSCRPulse();
+
+    void startSCRReset();
+
+    void updateSCRReset();
+
+    void stopSCRMovement();
+
 };
 
 #endif

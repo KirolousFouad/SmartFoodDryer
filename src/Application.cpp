@@ -1,6 +1,4 @@
 #include "Application.h"
-#include "Config.h"
-#include "RecipeDatabase.h"
 
 #include <Arduino.h>
 #include <math.h>
@@ -11,33 +9,56 @@
 
 Application::Application()
     : display(),
+
       encoder(
           ENCODER_CLK,
           ENCODER_DT,
-          ENCODER_SW),
+          ENCODER_SW
+      ),
+
       menuManager(),
-      state(STATE_MENU),
-      settings(),
+
       dryer(
-          8, // Circulation fan
-          9  // Cooling fan PWM
-          ),
+          CIRCULATION_FAN_PIN,
+          COOLING_FAN_PWM_PIN
+      ),
+
+      scr(
+          SCR_INCREASE_PIN,
+          SCR_DECREASE_PIN
+      ),
+
       temperatureManager(
-          5,  // DS18B20 data
-          13, // MAX6675 SCK
-          10, // MAX6675 CS
-          12  // MAX6675 SO / DO
-          ),
+          DS18B20_PIN,
+          MAX6675_SCK,
+          MAX6675_CS,
+          MAX6675_SO
+      ),
+
+      settings(),
+
+      state(STATE_MENU),
+
       lastHeartbeat(0),
       dryingStartTime(0),
       lastDryerUpdate(0),
       lastDisplayUpdate(0),
       lastTemperatureControl(0),
+      targetReachedStartTime(0),
+      lastSCRPulse(0),
+
       heaterEnabled(false),
-      finishScreenShown(false)
+      finishScreenShown(false),
+      targetReached(false),
+
+      currentSoftwarePower(0),
+      targetSoftwarePower(0),
+
+      scrResetInProgress(false),
+      scrResetStepsRemaining(0)
 {
     settings.temperature = 60;
-    settings.targetWeight = 0;
+    settings.targetWeight = 1000;
     settings.autoMode = false;
     settings.recipeID = 0;
 }
@@ -58,9 +79,9 @@ void Application::begin()
     Serial.println(" Firmware Version 0.2.0");
     Serial.println("==============================");
 
-    // -------------------------------------------------
-    // Display
-    // -------------------------------------------------
+    // =================================================
+    // DISPLAY
+    // =================================================
 
     Serial.println("[INIT] Display...");
 
@@ -82,9 +103,9 @@ void Application::begin()
 
     Serial.println("[INIT] Display OK");
 
-    // -------------------------------------------------
-    // Encoder
-    // -------------------------------------------------
+    // =================================================
+    // ENCODER
+    // =================================================
 
     Serial.println("[INIT] Encoder...");
 
@@ -92,9 +113,9 @@ void Application::begin()
 
     Serial.println("[INIT] Encoder OK");
 
-    // -------------------------------------------------
-    // Menu Manager
-    // -------------------------------------------------
+    // =================================================
+    // MENU
+    // =================================================
 
     Serial.println("[INIT] Menu Manager...");
 
@@ -102,9 +123,9 @@ void Application::begin()
 
     Serial.println("[INIT] Menu Manager OK");
 
-    // -------------------------------------------------
-    // Dryer
-    // -------------------------------------------------
+    // =================================================
+    // DRYER
+    // =================================================
 
     Serial.println("[INIT] Dryer...");
 
@@ -112,9 +133,9 @@ void Application::begin()
 
     Serial.println("[INIT] Dryer OK");
 
-    // -------------------------------------------------
-    // Temperature Manager
-    // -------------------------------------------------
+    // =================================================
+    // TEMPERATURE
+    // =================================================
 
     Serial.println("[INIT] Temperature Manager...");
 
@@ -122,9 +143,44 @@ void Application::begin()
 
     Serial.println("[INIT] Temperature Manager OK");
 
-    // -------------------------------------------------
-    // Initial State
-    // -------------------------------------------------
+    // =================================================
+    // SCR
+    // =================================================
+
+    Serial.println("[INIT] SCR...");
+
+    scr.begin();
+
+    Serial.println("[INIT] SCR OK");
+
+    // =================================================
+    // INITIAL SCR RESET
+    // =================================================
+
+    Serial.println();
+    Serial.println("[INIT] Resetting SCR to 0%...");
+
+    /*
+     * The physical SCR behaves like a push button.
+     *
+     * We don't know its physical value after power-up.
+     * Therefore we send 100 decrease pulses.
+     *
+     * This is done directly at startup.
+     */
+    scr.resetToZero();
+
+    currentSoftwarePower = 0;
+    targetSoftwarePower = 0;
+
+    scrResetInProgress = false;
+    scrResetStepsRemaining = 0;
+
+    Serial.println("[INIT] SCR reset complete.");
+
+    // =================================================
+    // INITIAL STATE
+    // =================================================
 
     state = STATE_MENU;
 
@@ -137,9 +193,16 @@ void Application::begin()
     lastDisplayUpdate = millis();
 
     lastTemperatureControl = millis();
+
+    targetReachedStartTime = 0;
+
+    lastSCRPulse = millis();
+
     heaterEnabled = false;
 
     finishScreenShown = false;
+
+    targetReached = false;
 
     menuManager.openMain();
 
@@ -159,48 +222,71 @@ void Application::begin()
 
 void Application::update()
 {
-    // -------------------------------------------------
-    // Encoder
-    // -------------------------------------------------
+    // =================================================
+    // ENCODER
+    // =================================================
 
     encoder.update();
 
     EncoderEvent event =
         encoder.getEvent();
 
-    // -------------------------------------------------
-    // Temperature update every 1 second
-    // -------------------------------------------------
+    // =================================================
+    // TEMPERATURE
+    // =================================================
 
     static unsigned long lastTemperatureUpdate = 0;
 
     if (millis() - lastTemperatureUpdate >= 1000)
     {
-        temperatureManager.update();
-
         lastTemperatureUpdate = millis();
 
+        temperatureManager.update();
+
+        // TEMP DEBUG
+        Serial.print("[TEMP DEBUG] AVG = ");
+        Serial.print(temperatureManager.getAverageTemperature());
+
+        Serial.print(" C | HOT = ");
+        Serial.print(temperatureManager.getHotTemperature());
+
+        Serial.println(" C");
+
+        // Keep temperature control
         if (state == STATE_RUNNING)
         {
             updateTemperatureControl();
         }
     }
 
-    // -------------------------------------------------
-    // Dryer update
-    // -------------------------------------------------
+    // =================================================
+    // DRYER
+    // =================================================
 
     if (millis() - lastDryerUpdate >= 50)
     {
         dryer.update();
 
-        lastDryerUpdate =
-            millis();
+        lastDryerUpdate = millis();
     }
 
-    // -------------------------------------------------
-    // Application state
-    // -------------------------------------------------
+    // =================================================
+    // SCR
+    //
+    // IMPORTANT:
+    // SCR control is NOT limited to STATE_RUNNING.
+    //
+    // This allows the SCR to return to zero after:
+    // - Finish
+    // - Error
+    // - Pause cancellation
+    // =================================================
+
+    updateSCRControl();
+
+    // =================================================
+    // APPLICATION STATE
+    // =================================================
 
     switch (state)
     {
@@ -253,9 +339,9 @@ void Application::update()
             break;
     }
 
-    // -------------------------------------------------
-    // Heartbeat
-    // -------------------------------------------------
+    // =================================================
+    // HEARTBEAT
+    // =================================================
 
     if (millis() - lastHeartbeat >= 5000)
     {
@@ -270,29 +356,47 @@ void Application::update()
 // =====================================================
 // TEMPERATURE CONTROL
 // =====================================================
-/*
+
 void Application::updateTemperatureControl()
 {
-    float currentTemperature =
+    if (!dryer.isRunning())
+    {
+        return;
+    }
+
+    float chamberTemperature =
         temperatureManager.getAverageTemperature();
 
-    float hotTemperature =
+    float safetyTemperature =
         temperatureManager.getHotTemperature();
 
-    // -------------------------------------------------
-    // Safety
-    // -------------------------------------------------
+    // =================================================
+    // SAFETY
+    // =================================================
 
-    if (!isnan(hotTemperature) &&
-        hotTemperature >= 90.0f)
+    if (!isnan(safetyTemperature) &&
+        safetyTemperature >= MAX_SAFE_TEMP)
     {
         Serial.println();
-        Serial.println(
-            "!!! SAFETY TEMPERATURE LIMIT !!!"
-        );
+        Serial.println("==============================");
+        Serial.println(" !!! SAFETY SHUTDOWN !!!");
+        Serial.println("==============================");
 
-        dryer.setHeaterPower(0);
+        Serial.print("Temperature: ");
+        Serial.print(safetyTemperature);
+        Serial.println(" C");
+
         dryer.stop();
+
+        heaterEnabled = false;
+
+        targetReached = false;
+
+        targetReachedStartTime = 0;
+
+        targetSoftwarePower = 0;
+
+        startSCRReset();
 
         state = STATE_ERROR;
 
@@ -301,36 +405,111 @@ void Application::updateTemperatureControl()
         return;
     }
 
-    // -------------------------------------------------
-    // Invalid chamber temperature
-    // -------------------------------------------------
+    // =================================================
+    // INVALID TEMPERATURE
+    // =================================================
 
-    if (isnan(currentTemperature))
+    if (isnan(chamberTemperature))
     {
         Serial.println(
-            "[CONTROL] Chamber temperature invalid"
+            "[CONTROL] Invalid chamber temperature"
         );
-
-        dryer.setHeaterPower(0);
 
         return;
     }
 
-    // -------------------------------------------------
-    // Calculate heater power
-    // -------------------------------------------------
+    float targetTemperature =
+        settings.temperature;
 
-    uint8_t power =
+    // =================================================
+    // TARGET REACHED
+    // =================================================
+
+    if (chamberTemperature >= targetTemperature)
+    {
+        if (!targetReached)
+        {
+            targetReached = true;
+
+            targetReachedStartTime =
+                millis();
+
+            Serial.println();
+            Serial.println(
+                "[CONTROL] Target temperature reached"
+            );
+
+            Serial.print(
+                "[CONTROL] Chamber: "
+            );
+
+            Serial.print(
+                chamberTemperature
+            );
+
+            Serial.println(" C");
+
+            Serial.println(
+                "[CONTROL] Starting 20 second hold"
+            );
+        }
+
+        /*
+         * Heater power becomes zero.
+         *
+         * The SCR will move down one physical pulse
+         * at a time.
+         */
+        targetSoftwarePower = 0;
+
+        return;
+    }
+
+    // =================================================
+    // BELOW TARGET
+    // =================================================
+
+    if (targetReached)
+    {
+        targetReached = false;
+
+        targetReachedStartTime = 0;
+
+        Serial.println(
+            "[CONTROL] Temperature dropped below target"
+        );
+    }
+
+    float difference =
+        targetTemperature -
+        chamberTemperature;
+
+    uint8_t desiredPower =
         calculateHeaterPower(
-            currentTemperature,
-            settings.temperature
+            chamberTemperature,
+            targetTemperature
         );
 
-    dryer.setHeaterPower(power);
+    targetSoftwarePower =
+        desiredPower;
+
+    Serial.print("[CONTROL] AVG: ");
+    Serial.print(chamberTemperature);
+
+    Serial.print(" C | Target: ");
+    Serial.print(targetTemperature);
+
+    Serial.print(" C | Difference: ");
+    Serial.print(difference);
+
+    Serial.print(" C | SCR Target: ");
+    Serial.print(targetSoftwarePower);
+
+    Serial.println("%");
 }
-*/
+
 // =====================================================
-// CALCULATE HEATER POWER
+// HEATER POWER CALCULATION
 // =====================================================
 
 uint8_t Application::calculateHeaterPower(
@@ -339,53 +518,314 @@ uint8_t Application::calculateHeaterPower(
 )
 {
     float difference =
-        targetTemperature - currentTemperature;
-
-    // -------------------------------------------------
-    // Already above target
-    // -------------------------------------------------
+        targetTemperature -
+        currentTemperature;
 
     if (difference <= 0.0f)
     {
         return 0;
     }
 
-    // -------------------------------------------------
-    // 10°C or more below target
-    // -------------------------------------------------
-
     if (difference >= 10.0f)
     {
         return 100;
     }
-
-    // -------------------------------------------------
-    // 5°C below target
-    // -------------------------------------------------
 
     if (difference >= 5.0f)
     {
         return 70;
     }
 
-    // -------------------------------------------------
-    // 2°C below target
-    // -------------------------------------------------
-
     if (difference >= 2.0f)
     {
         return 40;
     }
 
-    // -------------------------------------------------
-    // Less than 2°C below target
-    // -------------------------------------------------
-
     return 20;
 }
 
 // =====================================================
-// MENU HANDLING
+// SCR CONTROL
+// =====================================================
+
+void Application::updateSCRControl()
+{
+    // =================================================
+    // RESET HAS PRIORITY
+    // =================================================
+
+    if (scrResetInProgress)
+    {
+        updateSCRReset();
+
+        return;
+    }
+
+    // =================================================
+    // ALREADY AT TARGET
+    // =================================================
+
+    if (currentSoftwarePower ==
+        targetSoftwarePower)
+    {
+        return;
+    }
+
+    // =================================================
+    // ONE PHYSICAL PULSE AT A TIME
+    // =================================================
+
+    /*
+     * Never send another pulse until the previous
+     * physical button action has completed.
+     */
+
+    if (millis() - lastSCRPulse < 300)
+    {
+        return;
+    }
+
+    lastSCRPulse = millis();
+
+    // =================================================
+    // INCREASE
+    // =================================================
+
+    if (currentSoftwarePower <
+        targetSoftwarePower)
+    {
+        increaseSCRPulse();
+    }
+
+    // =================================================
+    // DECREASE
+    // =================================================
+
+    else
+    {
+        decreaseSCRPulse();
+    }
+}
+
+// =====================================================
+// INCREASE SCR ONE PHYSICAL STEP
+// =====================================================
+
+void Application::increaseSCRPulse()
+{
+    if (currentSoftwarePower >= 100)
+    {
+        currentSoftwarePower = 100;
+
+        return;
+    }
+
+    /*
+     * SCRController::increase()
+     *
+     * = ONE physical button press
+     *
+     * = ONE SCR %
+     */
+
+    scr.increase();
+
+    currentSoftwarePower++;
+
+    Serial.print(
+        "[SCR] Physical pulse +1 -> "
+    );
+
+    Serial.print(
+        currentSoftwarePower
+    );
+
+    Serial.println("%");
+}
+
+// =====================================================
+// DECREASE SCR ONE PHYSICAL STEP
+// =====================================================
+
+void Application::decreaseSCRPulse()
+{
+    if (currentSoftwarePower == 0)
+    {
+        return;
+    }
+
+    /*
+     * SCRController::decrease()
+     *
+     * = ONE physical button press
+     *
+     * = ONE SCR %
+     */
+
+    scr.decrease();
+
+    currentSoftwarePower--;
+
+    Serial.print(
+        "[SCR] Physical pulse -1 -> "
+    );
+
+    Serial.print(
+        currentSoftwarePower
+    );
+
+    Serial.println("%");
+}
+
+// =====================================================
+// START SCR RESET
+// =====================================================
+
+void Application::startSCRReset()
+{
+    if (scrResetInProgress)
+    {
+        return;
+    }
+
+    Serial.println(
+        "[SCR] Starting non-blocking reset to 0%"
+    );
+
+    /*
+     * We don't know the actual physical SCR value.
+     *
+     * Send enough decrease pulses to guarantee zero.
+     *
+     * One pulse every update cycle.
+     */
+    scrResetInProgress = true;
+
+    scrResetStepsRemaining = 100;
+
+    targetSoftwarePower = 0;
+
+    lastSCRPulse = millis();
+}
+
+// =====================================================
+// UPDATE SCR RESET
+// =====================================================
+
+void Application::updateSCRReset()
+{
+    if (!scrResetInProgress)
+    {
+        return;
+    }
+
+    /*
+     * Wait between physical button presses.
+     *
+     * This keeps:
+     * - encoder responsive
+     * - LCD responsive
+     * - temperature readings running
+     */
+
+    if (millis() - lastSCRPulse < 300)
+    {
+        return;
+    }
+
+    lastSCRPulse = millis();
+
+    if (scrResetStepsRemaining > 0)
+    {
+        scr.decrease();
+
+        scrResetStepsRemaining--;
+
+        currentSoftwarePower = 0;
+
+        Serial.print(
+            "[SCR RESET] Pulse sent | Remaining: "
+        );
+
+        Serial.println(
+            scrResetStepsRemaining
+        );
+    }
+
+    if (scrResetStepsRemaining == 0)
+    {
+        scrResetInProgress = false;
+
+        currentSoftwarePower = 0;
+
+        targetSoftwarePower = 0;
+
+        Serial.println(
+            "[SCR RESET] Physical SCR = 0%"
+        );
+    }
+}
+
+// =====================================================
+// STOP SCR MOVEMENT
+// =====================================================
+
+void Application::stopSCRMovement()
+{
+    targetSoftwarePower =
+        currentSoftwarePower;
+}
+
+// =====================================================
+// TARGET TEMPERATURE HOLD
+// =====================================================
+
+void Application::checkTargetTemperatureHold()
+{
+    if (!targetReached)
+    {
+        return;
+    }
+
+    /*
+     * Make sure the heater is already OFF.
+     */
+
+    targetSoftwarePower = 0;
+
+    if (millis() -
+        targetReachedStartTime >= 20000UL)
+    {
+        Serial.println();
+        Serial.println("==============================");
+        Serial.println(" SIMULATION FINISHED");
+        Serial.println("==============================");
+
+        Serial.println(
+            "Target temperature maintained for 20 seconds."
+        );
+
+        dryer.stop();
+
+        heaterEnabled = false;
+
+        targetSoftwarePower = 0;
+
+        /*
+         * Start SCR reset but DO NOT block.
+         */
+        startSCRReset();
+
+        state = STATE_FINISHED;
+
+        finishScreenShown = false;
+
+        drawFinishedScreen();
+    }
+}
+
+// =====================================================
+// MENU
 // =====================================================
 
 void Application::handleMenu(
@@ -396,7 +836,9 @@ void Application::handleMenu(
         menuManager.currentMenu();
 
     if (menu == nullptr)
+    {
         return;
+    }
 
     if (event == ENCODER_RIGHT)
     {
@@ -456,6 +898,7 @@ void Application::handleMenuAction(
             settings.autoMode = false;
 
             settings.temperature = 60;
+
             settings.targetWeight = 1000;
 
             state = STATE_MANUAL_TEMP;
@@ -484,17 +927,9 @@ void Application::handleMenuAction(
             settings.autoMode = true;
 
             Serial.println();
-            Serial.println(
-                "=============================="
-            );
-
-            Serial.println(
-                " RECIPE SELECTED"
-            );
-
-            Serial.println(
-                "=============================="
-            );
+            Serial.println("==============================");
+            Serial.println(" RECIPE SELECTED");
+            Serial.println("==============================");
 
             Serial.print("Recipe: ");
             Serial.println(recipe.name);
@@ -552,7 +987,9 @@ void Application::drawCurrentMenu()
         menuManager.currentMenu();
 
     if (menu == nullptr)
+    {
         return;
+    }
 
     display.drawMenu(
         menu->getTitle(),
@@ -572,7 +1009,7 @@ void Application::handleManualTemperature(
 {
     if (event == ENCODER_RIGHT)
     {
-        if (settings.temperature < MAX_TEMP)
+        if (settings.temperature < 120)
         {
             settings.temperature++;
         }
@@ -582,7 +1019,7 @@ void Application::handleManualTemperature(
 
     else if (event == ENCODER_LEFT)
     {
-        if (settings.temperature > MIN_TEMP)
+        if (settings.temperature > 0)
         {
             settings.temperature--;
         }
@@ -647,7 +1084,7 @@ void Application::handleManualWeight(
 {
     if (event == ENCODER_RIGHT)
     {
-        if (settings.targetWeight < MAX_WEIGHT)
+        if (settings.targetWeight < 10000)
         {
             settings.targetWeight += 100;
         }
@@ -657,7 +1094,7 @@ void Application::handleManualWeight(
 
     else if (event == ENCODER_LEFT)
     {
-        if (settings.targetWeight > MIN_WEIGHT)
+        if (settings.targetWeight > 100)
         {
             settings.targetWeight -= 100;
         }
@@ -720,18 +1157,24 @@ void Application::handleReady(
 {
     if (event == ENCODER_CLICK)
     {
+        /*
+         * DO NOT start the dryer while SCR reset
+         * is still active.
+         */
+
+        if (scrResetInProgress)
+        {
+            Serial.println(
+                "[READY] Waiting for SCR reset..."
+            );
+
+            return;
+        }
+
         Serial.println();
-        Serial.println(
-            "=============================="
-        );
-
-        Serial.println(
-            " STARTING DRYING"
-        );
-
-        Serial.println(
-            "=============================="
-        );
+        Serial.println("==============================");
+        Serial.println(" STARTING DRYING");
+        Serial.println("==============================");
 
         Serial.print("Temperature: ");
         Serial.print(settings.temperature);
@@ -752,10 +1195,27 @@ void Application::handleReady(
             Serial.println("Mode: MANUAL");
         }
 
+        // =============================================
+        // START DRYER
+        // =============================================
+
         dryer.start(
-            settings.temperature);
+            settings.temperature
+        );
 
         heaterEnabled = true;
+
+        // =============================================
+        // RESET SOFTWARE CONTROL
+        // =============================================
+
+        currentSoftwarePower = 0;
+
+        targetSoftwarePower = 0;
+
+        targetReached = false;
+
+        targetReachedStartTime = 0;
 
         dryingStartTime =
             millis();
@@ -815,7 +1275,7 @@ void Application::drawReadyScreen()
     snprintf(
         line,
         sizeof(line),
-        "%uC  Click=Start",
+        "%uC Click=Start",
         settings.temperature
     );
 
@@ -825,43 +1285,27 @@ void Application::drawReadyScreen()
         line
     );
 }
-
 // =====================================================
 // RUNNING
 // =====================================================
 
-void Application::handleRunning(
-    EncoderEvent event
-)
+void Application::handleRunning(EncoderEvent event)
 {
     // -------------------------------------------------
-    // Long click = stop
-    // -------------------------------------------------
-
-    if (event == ENCODER_LONG_CLICK)
-    {
-        dryer.stop();
-
-        heaterEnabled = false;
-
-        state = STATE_FINISHED;
-
-        finishScreenShown = false;
-
-        drawFinishedScreen();
-
-        return;
-    }
-
-    // -------------------------------------------------
-    // Click = pause
+    // ENCODER CLICK = PAUSE
     // -------------------------------------------------
 
     if (event == ENCODER_CLICK)
     {
-        dryer.stop();
+        Serial.println("[RUNNING] Pause requested");
 
+        dryer.stop();
         heaterEnabled = false;
+
+        // Stop increasing/decreasing SCR target.
+        // Current physical SCR value is left unchanged
+        // while paused.
+        stopSCRMovement();
 
         state = STATE_PAUSED;
 
@@ -871,110 +1315,146 @@ void Application::handleRunning(
     }
 
     // -------------------------------------------------
-    // Temperature control
+    // LONG CLICK = FINISH
     // -------------------------------------------------
 
-    updateTemperatureControl();
+    if (event == ENCODER_LONG_CLICK)
+    {
+        Serial.println("[RUNNING] Finish requested");
+
+        dryer.stop();
+        heaterEnabled = false;
+
+        // Immediately request SCR = 0%.
+        targetSoftwarePower = 0;
+
+        state = STATE_FINISHED;
+        finishScreenShown = false;
+
+        drawFinishedScreen();
+
+        return;
+    }
+
+    // -------------------------------------------------
+    // TEMPERATURE HOLD
+    // -------------------------------------------------
+
+    checkTargetTemperatureHold();
 
     if (state != STATE_RUNNING)
+    {
         return;
+    }
 
     // -------------------------------------------------
-    // LCD update
+    // LCD UPDATE
     // -------------------------------------------------
 
     if (millis() - lastDisplayUpdate >= 500)
     {
         drawRunningScreen();
 
-        lastDisplayUpdate =
-            millis();
+        lastDisplayUpdate = millis();
     }
 }
-
-// =====================================================
-// RUNNING SCREEN
-// =====================================================
-
 void Application::drawRunningScreen()
 {
-    static float lastAverage = NAN;
-    static float lastHot = NAN;
-    static uint8_t lastPower = 255;
-    static bool firstDraw = true;
-
     float average =
         temperatureManager.getAverageTemperature();
 
     float hot =
         temperatureManager.getHotTemperature();
 
-    uint8_t power =
-        dryer.getHeaterPower();
-
-    bool averageChanged =
-        (isnan(average) != isnan(lastAverage)) ||
-        (!isnan(average) &&
-         !isnan(lastAverage) &&
-         fabs(average - lastAverage) >= 0.1f);
-
-    bool hotChanged =
-        (isnan(hot) != isnan(lastHot)) ||
-        (!isnan(hot) &&
-         !isnan(lastHot) &&
-         fabs(hot - lastHot) >= 0.1f);
-
-    bool powerChanged =
-        power != lastPower;
-
-    if (!firstDraw &&
-        !averageChanged &&
-        !hotChanged &&
-        !powerChanged)
-    {
-        return;
-    }
-
-    firstDraw = false;
-
-    lastAverage = average;
-    lastHot = hot;
-    lastPower = power;
-
     char line1[17];
     char line2[17];
+
+    // =================================================
+    // LINE 1
+    // Average temperature + target temperature
+    // =================================================
 
     if (isnan(average))
     {
         snprintf(
             line1,
             sizeof(line1),
-            "AVG: --.- C");
+            "AVG: --.-C T:%3uC",
+            settings.temperature
+        );
     }
     else
     {
+        char avgText[8];
+
+        dtostrf(
+            average,
+            4,
+            1,
+            avgText
+        );
+
         snprintf(
             line1,
             sizeof(line1),
-            "AVG:%5.1f C",
-            average);
+            "AVG:%sC T:%3uC",
+            avgText,
+            settings.temperature
+        );
     }
+
+    // =================================================
+    // LINE 2
+    // Hot temperature
+    // =================================================
 
     if (isnan(hot))
     {
         snprintf(
             line2,
             sizeof(line2),
-            "HOT: --.- C");
+            "HOT: --.-C"
+        );
     }
     else
     {
+        char hotText[8];
+
+        dtostrf(
+            hot,
+            4,
+            1,
+            hotText
+        );
+
         snprintf(
             line2,
             sizeof(line2),
-            "HOT:%5.1f C",
-            hot);
+            "HOT:%sC",
+            hotText
+        );
     }
+
+    // =================================================
+    // LCD
+    // Clear both rows completely
+    // =================================================
+
+    display.print(
+        0,
+        0,
+        "                "
+    );
+
+    display.print(
+        0,
+        1,
+        "                "
+    );
+
+    // =================================================
+    // Write new values
+    // =================================================
 
     display.print(
         0,
@@ -988,7 +1468,6 @@ void Application::drawRunningScreen()
         line2
     );
 }
-
 // =====================================================
 // PAUSED
 // =====================================================
@@ -1004,7 +1483,8 @@ void Application::handlePaused(
         );
 
         dryer.start(
-            settings.temperature);
+            settings.temperature
+        );
 
         heaterEnabled = true;
 
@@ -1020,6 +1500,16 @@ void Application::handlePaused(
         );
 
         dryer.stop();
+
+        heaterEnabled = false;
+
+        targetSoftwarePower = 0;
+
+        /*
+         * Reset SCR physically.
+         */
+
+        startSCRReset();
 
         menuManager.openMain();
 
@@ -1058,12 +1548,27 @@ void Application::handleFinished(
     EncoderEvent event
 )
 {
+    /*
+     * ALWAYS keep requesting zero.
+     */
+
+    targetSoftwarePower = 0;
+
+    /*
+     * SCR reset continues in the background
+     * through updateSCRControl().
+     */
+
     if (!finishScreenShown)
     {
         drawFinishedScreen();
 
         finishScreenShown = true;
     }
+
+    /*
+     * Encoder remains immediately responsive.
+     */
 
     if (event == ENCODER_CLICK ||
         event == ENCODER_LONG_CLICK)
@@ -1112,6 +1617,20 @@ void Application::handleError(
         dryer.stop();
     }
 
+    heaterEnabled = false;
+
+    targetSoftwarePower = 0;
+
+    /*
+     * Keep resetting SCR in background.
+     */
+
+    if (!scrResetInProgress &&
+        currentSoftwarePower > 0)
+    {
+        startSCRReset();
+    }
+
     if (event == ENCODER_CLICK ||
         event == ENCODER_LONG_CLICK)
     {
@@ -1142,90 +1661,4 @@ void Application::drawErrorScreen()
         1,
         "Click = Menu"
     );
-}
-// =====================================================
-// TEMPERATURE CONTROL
-// =====================================================
-
-void Application::updateTemperatureControl()
-{
-    if (!dryer.isRunning())
-        return;
-
-    float chamberTemperature =
-        temperatureManager.getAverageTemperature();
-
-    float safetyTemperature =
-        temperatureManager.getHotTemperature();
-
-    // -------------------------------------------------
-    // SAFETY CHECK
-    // -------------------------------------------------
-
-    if (!isnan(safetyTemperature) &&
-        safetyTemperature >= MAX_SAFE_TEMP)
-    {
-        Serial.println();
-        Serial.println("==============================");
-        Serial.println(" !!! SAFETY SHUTDOWN !!!");
-        Serial.println("==============================");
-
-        Serial.print("MAX6675 Temperature: ");
-        Serial.print(safetyTemperature);
-        Serial.println(" C");
-
-        dryer.stop();
-
-        heaterEnabled = false;
-
-        state = STATE_ERROR;
-
-        drawErrorScreen();
-
-        return;
-    }
-
-    // -------------------------------------------------
-    // No valid chamber temperature
-    // -------------------------------------------------
-
-    if (isnan(chamberTemperature))
-    {
-        return;
-    }
-
-    // -------------------------------------------------
-    // HEATER CONTROL
-    // -------------------------------------------------
-
-    float targetTemperature =
-        settings.temperature;
-
-    // Heater OFF when target is reached
-    if (heaterEnabled &&
-        chamberTemperature >= targetTemperature)
-    {
-        dryer.heaterOff();
-
-        heaterEnabled = false;
-
-        Serial.print("[CONTROL] Heater OFF | Chamber: ");
-        Serial.print(chamberTemperature);
-        Serial.println(" C");
-    }
-
-    // Heater ON when temperature falls below
-    // target - hysteresis
-    else if (!heaterEnabled &&
-             chamberTemperature <=
-             targetTemperature - TEMP_HYSTERESIS)
-    {
-        dryer.heaterOn();
-
-        heaterEnabled = true;
-
-        Serial.print("[CONTROL] Heater ON | Chamber: ");
-        Serial.print(chamberTemperature);
-        Serial.println(" C");
-    }
 }
