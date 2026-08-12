@@ -1178,10 +1178,9 @@ void Application::handleReady(
 {
     if (event == ENCODER_CLICK)
     {
-        /*
-         * DO NOT start the dryer while SCR reset
-         * is still active.
-         */
+        // =================================================
+        // SAFETY CHECKS
+        // =================================================
 
         if (scrResetInProgress)
         {
@@ -1192,14 +1191,162 @@ void Application::handleReady(
             return;
         }
 
-        Serial.println();
-        Serial.println("==============================");
-        Serial.println(" STARTING DRYING");
-        Serial.println("==============================");
+        if (!weightSensor.isReady())
+        {
+            Serial.println(
+                "[READY] ERROR: Weight sensor not ready"
+            );
 
-        Serial.print("Temperature: ");
-        Serial.print(settings.temperature);
+            state = STATE_ERROR;
+            drawErrorScreen();
+
+            return;
+        }
+
+        if (weightSensor.isTaring())
+        {
+            Serial.println(
+                "[READY] Waiting for weight sensor tare..."
+            );
+
+            return;
+        }
+
+        // =================================================
+        // CAPTURE TARGET WEIGHT
+        // =================================================
+
+        targetWeight =
+            settings.targetWeight;
+
+        if (targetWeight <= 0.0f)
+        {
+            Serial.println(
+                "[READY] ERROR: Invalid target weight"
+            );
+
+            state = STATE_ERROR;
+            drawErrorScreen();
+
+            return;
+        }
+
+        // =================================================
+        // CAPTURE STARTING WEIGHT
+        // =================================================
+
+        captureStartingWeight();
+
+        // -------------------------------------------------
+        // Verify starting weight
+        // -------------------------------------------------
+
+        if (startingWeight <= 0.0f)
+        {
+            Serial.println(
+                "[READY] ERROR: Invalid starting weight"
+            );
+
+            state = STATE_ERROR;
+            drawErrorScreen();
+
+            return;
+        }
+
+        // =================================================
+        // TARGET MUST BE LOWER THAN STARTING WEIGHT
+        // =================================================
+
+        if (targetWeight >= startingWeight)
+        {
+            Serial.println();
+            Serial.println(
+                "[READY] ERROR: Target weight must be"
+            );
+            Serial.println(
+                "[READY] lower than starting weight"
+            );
+
+            Serial.print(
+                "[READY] Starting: "
+            );
+
+            Serial.print(
+                startingWeight,
+                2
+            );
+
+            Serial.println(" g");
+
+            Serial.print(
+                "[READY] Target: "
+            );
+
+            Serial.print(
+                targetWeight,
+                2
+            );
+
+            Serial.println(" g");
+
+            state = STATE_ERROR;
+            drawErrorScreen();
+
+            return;
+        }
+
+        // =================================================
+        // STARTING INFORMATION
+        // =================================================
+
+        Serial.println();
+        Serial.println(
+            "=============================="
+        );
+
+        Serial.println(
+            " STARTING DRYING"
+        );
+
+        Serial.println(
+            "=============================="
+        );
+
+        Serial.print(
+            "Temperature: "
+        );
+
+        Serial.print(
+            settings.temperature
+        );
+
         Serial.println(" C");
+
+        Serial.print(
+            "Starting weight: "
+        );
+
+        Serial.print(
+            startingWeight,
+            2
+        );
+
+        Serial.println(" g");
+
+        Serial.print(
+            "Target weight: "
+        );
+
+        Serial.print(
+            targetWeight,
+            2
+        );
+
+        Serial.println(" g");
+
+        // =================================================
+        // RECIPE / MODE
+        // =================================================
 
         if (settings.autoMode)
         {
@@ -1208,17 +1355,24 @@ void Application::handleReady(
                     settings.recipeID
                 );
 
-            Serial.print("Recipe: ");
-            Serial.println(recipe.name);
+            Serial.print(
+                "Recipe: "
+            );
+
+            Serial.println(
+                recipe.name
+            );
         }
         else
         {
-            Serial.println("Mode: MANUAL");
+            Serial.println(
+                "Mode: MANUAL"
+            );
         }
 
-        // =============================================
+        // =================================================
         // START DRYER
-        // =============================================
+        // =================================================
 
         dryer.start(
             settings.temperature
@@ -1226,9 +1380,9 @@ void Application::handleReady(
 
         heaterEnabled = true;
 
-        // =============================================
+        // =================================================
         // RESET SOFTWARE CONTROL
-        // =============================================
+        // =================================================
 
         currentSoftwarePower = 0;
 
@@ -1238,6 +1392,10 @@ void Application::handleReady(
 
         targetReachedStartTime = 0;
 
+        weightTargetStartTime = 0;
+
+        weightTargetReached = false;
+
         dryingStartTime =
             millis();
 
@@ -1246,7 +1404,12 @@ void Application::handleReady(
         lastDisplayUpdate =
             millis();
 
-        state = STATE_RUNNING;
+        // =================================================
+        // ENTER RUNNING STATE
+        // =================================================
+
+        state =
+            STATE_RUNNING;
 
         drawRunningScreen();
     }
@@ -1260,7 +1423,6 @@ void Application::handleReady(
         drawCurrentMenu();
     }
 }
-
 // =====================================================
 // READY SCREEN
 // =====================================================

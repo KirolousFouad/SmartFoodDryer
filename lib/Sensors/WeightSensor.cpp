@@ -18,7 +18,7 @@ WeightSensor::WeightSensor(
       ready(false),
       taring(false),
 
-      calibrationFactor(-25.0f),
+      calibrationFactor(-34.0f),
 
       filterAlpha(0.20f),
       filterInitialized(false),
