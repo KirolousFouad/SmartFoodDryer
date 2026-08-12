@@ -47,14 +47,12 @@ enum ApplicationState
 class Application
 {
 public:
-
     Application();
 
     void begin();
     void update();
 
 private:
-
     // =================================================
     // HARDWARE / MODULES
     // =================================================
@@ -85,6 +83,17 @@ private:
 
     WeightSensor weightSensor;
 
+    // =================================================
+    // DRYING WEIGHT CONTROL
+    // =================================================
+
+    float startingWeight;
+    float currentWeight;
+    float targetWeight;
+
+    unsigned long weightTargetStartTime;
+
+    bool weightTargetReached;
     // =================================================
     // TIMERS
     // =================================================
@@ -130,13 +139,11 @@ private:
     // =================================================
 
     void handleMenu(
-        EncoderEvent event
-    );
+        EncoderEvent event);
 
     void handleMenuAction(
         MenuAction action,
-        uint8_t parameter
-    );
+        uint8_t parameter);
 
     void drawCurrentMenu();
 
@@ -145,8 +152,7 @@ private:
     // =================================================
 
     void handleManualTemperature(
-        EncoderEvent event
-    );
+        EncoderEvent event);
 
     void drawManualTemperature();
 
@@ -155,8 +161,7 @@ private:
     // =================================================
 
     void handleManualWeight(
-        EncoderEvent event
-    );
+        EncoderEvent event);
 
     void drawManualWeight();
 
@@ -165,8 +170,7 @@ private:
     // =================================================
 
     void handleReady(
-        EncoderEvent event
-    );
+        EncoderEvent event);
 
     void drawReadyScreen();
 
@@ -175,8 +179,7 @@ private:
     // =================================================
 
     void handleRunning(
-        EncoderEvent event
-    );
+        EncoderEvent event);
 
     void drawRunningScreen();
 
@@ -185,8 +188,7 @@ private:
     // =================================================
 
     void handlePaused(
-        EncoderEvent event
-    );
+        EncoderEvent event);
 
     void drawPausedScreen();
 
@@ -195,8 +197,7 @@ private:
     // =================================================
 
     void handleFinished(
-        EncoderEvent event
-    );
+        EncoderEvent event);
 
     void drawFinishedScreen();
 
@@ -205,8 +206,7 @@ private:
     // =================================================
 
     void handleError(
-        EncoderEvent event
-    );
+        EncoderEvent event);
 
     void drawErrorScreen();
 
@@ -218,8 +218,7 @@ private:
 
     uint8_t calculateHeaterPower(
         float currentTemperature,
-        float targetTemperature
-    );
+        float targetTemperature);
 
     void checkTargetTemperatureHold();
 
@@ -238,7 +237,13 @@ private:
     void updateSCRReset();
 
     void stopSCRMovement();
+    void updateWeightControl();
 
+    void captureStartingWeight();
+
+    void checkTargetWeight();
+
+    void finishDrying();
 };
 
 #endif

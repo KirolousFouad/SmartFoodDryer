@@ -38,6 +38,12 @@ Application::Application()
           HX711_DOUT,
           HX711_SCK),
 
+    startingWeight(0.0f),
+    currentWeight(0.0f),
+    targetWeight(0.0f),
+    weightTargetStartTime(0),
+    weightTargetReached(false),
+
       lastHeartbeat(0),
       dryingStartTime(0),
       lastDryerUpdate(0),
@@ -330,6 +336,8 @@ void Application::update()
         case STATE_RUNNING:
 
             handleRunning(event);
+
+            updateWeightControl();
 
             break;
 
@@ -1674,4 +1682,248 @@ void Application::drawErrorScreen()
         1,
         "Click = Menu"
     );
+}
+// =========================================================
+// WEIGHT CONTROL
+// =========================================================
+
+void Application::updateWeightControl()
+{
+    // -------------------------------------------------
+    // Safety check
+    // -------------------------------------------------
+
+    if (!weightSensor.isReady())
+    {
+        return;
+    }
+
+    if (weightSensor.isTaring())
+    {
+        return;
+    }
+
+    // -------------------------------------------------
+    // Read current filtered weight
+    // -------------------------------------------------
+
+    currentWeight =
+        weightSensor.getWeight();
+
+    // -------------------------------------------------
+    // Invalid reading
+    // -------------------------------------------------
+
+    if (isnan(currentWeight))
+    {
+        return;
+    }
+
+    // -------------------------------------------------
+    // Check target weight
+    // -------------------------------------------------
+
+    checkTargetWeight();
+}
+// =========================================================
+// CAPTURE STARTING WEIGHT
+// =========================================================
+
+void Application::captureStartingWeight()
+{
+    if (!weightSensor.isReady())
+    {
+        Serial.println(
+            "[WEIGHT] Cannot capture starting weight"
+        );
+
+        return;
+    }
+
+    startingWeight =
+        weightSensor.getWeight();
+
+    currentWeight =
+        startingWeight;
+
+    weightTargetStartTime = 0;
+
+    weightTargetReached = false;
+
+    Serial.print(
+        "[WEIGHT] Starting weight: "
+    );
+
+    Serial.print(
+        startingWeight,
+        2
+    );
+
+    Serial.println(
+        " g"
+    );
+}
+// =========================================================
+// CHECK TARGET WEIGHT
+// =========================================================
+
+void Application::checkTargetWeight()
+{
+    // -------------------------------------------------
+    // Target must be valid
+    // -------------------------------------------------
+
+    if (targetWeight <= 0.0f)
+    {
+        return;
+    }
+
+    // -------------------------------------------------
+    // Already finished
+    // -------------------------------------------------
+
+    if (weightTargetReached)
+    {
+        return;
+    }
+
+    // -------------------------------------------------
+    // Check whether target has been reached
+    // -------------------------------------------------
+
+    if (currentWeight <= targetWeight)
+    {
+        // Start confirmation timer
+        if (weightTargetStartTime == 0)
+        {
+            weightTargetStartTime =
+                millis();
+
+            Serial.println(
+                "[WEIGHT] Target reached - "
+                "starting confirmation"
+            );
+        }
+
+        // -------------------------------------------------
+        // Require the target condition to remain valid
+        // -------------------------------------------------
+
+        constexpr unsigned long TARGET_HOLD_TIME =
+            5000UL;
+
+        if (millis() -
+            weightTargetStartTime >=
+            TARGET_HOLD_TIME)
+        {
+            weightTargetReached = true;
+
+            Serial.println(
+                "[WEIGHT] Target weight confirmed"
+            );
+
+            finishDrying();
+        }
+    }
+    else
+    {
+        // Weight went above target again.
+        // Cancel confirmation timer.
+
+        if (weightTargetStartTime != 0)
+        {
+            Serial.println(
+                "[WEIGHT] Target confirmation cancelled"
+            );
+        }
+
+        weightTargetStartTime = 0;
+    }
+}
+// =========================================================
+// FINISH DRYING
+// =========================================================
+
+void Application::finishDrying()
+{
+    Serial.println();
+    Serial.println(
+        "================================"
+    );
+
+    Serial.println(
+        "[DRYING] TARGET WEIGHT REACHED"
+    );
+
+    Serial.println(
+        "================================"
+    );
+
+    // -------------------------------------------------
+    // Disable heater
+    // -------------------------------------------------
+
+    heaterEnabled = false;
+
+    targetSoftwarePower = 0;
+
+    // -------------------------------------------------
+    // Force SCR shutdown
+    // -------------------------------------------------
+
+    startSCRReset();
+
+    // -------------------------------------------------
+    // Save final weight
+    // -------------------------------------------------
+
+    currentWeight =
+        weightSensor.getWeight();
+
+    Serial.print(
+        "[DRYING] Starting weight: "
+    );
+
+    Serial.print(
+        startingWeight,
+        2
+    );
+
+    Serial.println(
+        " g"
+    );
+
+    Serial.print(
+        "[DRYING] Target weight: "
+    );
+
+    Serial.print(
+        targetWeight,
+        2
+    );
+
+    Serial.println(
+        " g"
+    );
+
+    Serial.print(
+        "[DRYING] Final weight: "
+    );
+
+    Serial.print(
+        currentWeight,
+        2
+    );
+
+    Serial.println(
+        " g"
+    );
+
+    // -------------------------------------------------
+    // Change application state
+    // -------------------------------------------------
+
+    state = STATE_FINISHED;
+
+    finishScreenShown = false;
 }

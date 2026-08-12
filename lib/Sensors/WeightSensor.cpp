@@ -1,4 +1,5 @@
 #include "WeightSensor.h"
+
 #include <math.h>
 
 // =========================================================
@@ -10,10 +11,23 @@ WeightSensor::WeightSensor(
     uint8_t clockPin
 )
     : loadCell(dataPin, clockPin),
-      weight(0.0f),
+
+      rawWeight(0.0f),
+      filteredWeight(0.0f),
+
       ready(false),
       taring(false),
-      calibrationFactor(-25.00f)
+
+      calibrationFactor(-25.0f),
+
+      filterAlpha(0.20f),
+      filterInitialized(false),
+
+      stabilityRange(5.0f),
+      stabilityStartTime(0),
+      stabilityTime(3000UL),
+
+      stable(false)
 {
 }
 
@@ -34,7 +48,9 @@ void WeightSensor::begin()
 
     loadCell.begin();
 
-    Serial.println("[WEIGHT] HX711 started");
+    Serial.println(
+        "[WEIGHT] HX711 started"
+    );
 
     // -------------------------------------------------
     // Calibration factor
@@ -54,7 +70,7 @@ void WeightSensor::begin()
     );
 
     // -------------------------------------------------
-    // Initial tare
+    // Start tare
     // -------------------------------------------------
 
     Serial.println(
@@ -67,7 +83,7 @@ void WeightSensor::begin()
     );
 
     // -------------------------------------------------
-    // Check initialization
+    // Check tare timeout
     // -------------------------------------------------
 
     if (loadCell.getTareTimeoutFlag())
@@ -82,6 +98,10 @@ void WeightSensor::begin()
         return;
     }
 
+    // -------------------------------------------------
+    // Check signal timeout
+    // -------------------------------------------------
+
     if (loadCell.getSignalTimeoutFlag())
     {
         Serial.println(
@@ -95,12 +115,19 @@ void WeightSensor::begin()
     }
 
     // -------------------------------------------------
-    // Ready
+    // Initialize state
     // -------------------------------------------------
+
+    rawWeight = 0.0f;
+    filteredWeight = 0.0f;
+
+    filterInitialized = false;
+
+    stabilityStartTime = 0;
+    stable = false;
 
     ready = true;
     taring = false;
-    weight = 0.0f;
 
     Serial.println(
         "[WEIGHT] HX711 ready"
@@ -116,7 +143,6 @@ void WeightSensor::begin()
 // =========================================================
 // UPDATE
 // =========================================================
-
 void WeightSensor::update()
 {
     if (!ready)
@@ -133,16 +159,23 @@ void WeightSensor::update()
         return;
     }
 
-    // -------------------------------------------------
-    // TARE IN PROGRESS
-    // -------------------------------------------------
+    // =================================================
+    // TARE
+    // =================================================
 
     if (taring)
     {
         if (loadCell.getTareStatus())
         {
             taring = false;
-            weight = 0.0f;
+
+            rawWeight = 0.0f;
+            filteredWeight = 0.0f;
+
+            filterInitialized = false;
+
+            stabilityStartTime = 0;
+            stable = false;
 
             Serial.println(
                 "[WEIGHT] Tare complete"
@@ -152,28 +185,27 @@ void WeightSensor::update()
         return;
     }
 
-    // -------------------------------------------------
-    // READ WEIGHT
-    // -------------------------------------------------
+    // =================================================
+    // READ RAW WEIGHT
+    // =================================================
 
     float newWeight =
         loadCell.getData();
 
     // -------------------------------------------------
-    // Validate
+    // Invalid reading
     // -------------------------------------------------
 
     if (isnan(newWeight))
     {
-        Serial.println(
-            "[WEIGHT] Invalid reading"
-        );
+        stable = false;
+        stabilityStartTime = 0;
 
         return;
     }
 
     // -------------------------------------------------
-    // Remove tiny negative values
+    // Small negative values
     // -------------------------------------------------
 
     if (newWeight < 0.0f &&
@@ -182,28 +214,92 @@ void WeightSensor::update()
         newWeight = 0.0f;
     }
 
+    rawWeight = newWeight;
+
+    // =================================================
+    // EMA FILTER
+    // =================================================
+
+    if (!filterInitialized)
+    {
+        filteredWeight = rawWeight;
+
+        filterInitialized = true;
+    }
+    else
+    {
+        filteredWeight =
+            (filterAlpha * rawWeight) +
+            ((1.0f - filterAlpha) * filteredWeight);
+    }
+
+    // =================================================
+    // STABILITY DETECTION
+    // =================================================
+
+    float difference =
+        fabs(
+            rawWeight -
+            filteredWeight
+        );
+
     // -------------------------------------------------
-    // Store weight
+    // Weight is currently stable
     // -------------------------------------------------
 
-    weight = newWeight;
+    if (difference <= stabilityRange)
+    {
+        if (stabilityStartTime == 0)
+        {
+            stabilityStartTime =
+                millis();
+        }
+
+        if (millis() -
+            stabilityStartTime >= stabilityTime)
+        {
+            stable = true;
+        }
+    }
 
     // -------------------------------------------------
-    // SERIAL DIAGNOSTICS
+    // Weight moved significantly
     // -------------------------------------------------
 
-    Serial.print(
-        "[WEIGHT] "
-    );
+    else
+    {
+        stabilityStartTime = 0;
+        stable = false;
+    }
 
-    Serial.print(
-        weight,
-        2
-    );
+    // =================================================
+    // SERIAL DEBUG
+    // =================================================
 
-    Serial.println(
-        " g"
-    );
+    static unsigned long lastWeightDebug = 0;
+
+    if (millis() -
+        lastWeightDebug >= 500)
+    {
+        lastWeightDebug = millis();
+
+        Serial.print("[WEIGHT] RAW: ");
+        Serial.print(rawWeight, 2);
+
+        Serial.print(" g | FILTERED: ");
+        Serial.print(filteredWeight, 2);
+
+        Serial.print(" g | STABLE: ");
+
+        if (stable)
+        {
+            Serial.println("YES");
+        }
+        else
+        {
+            Serial.println("NO");
+        }
+    }
 }
 
 // =========================================================
@@ -221,11 +317,6 @@ void WeightSensor::tare()
         return;
     }
 
-    if (taring)
-    {
-        return;
-    }
-
     Serial.println(
         "[WEIGHT] Starting tare..."
     );
@@ -233,6 +324,10 @@ void WeightSensor::tare()
     loadCell.tareNoDelay();
 
     taring = true;
+
+    stable = false;
+
+    stabilityStartTime = 0;
 }
 
 // =========================================================
@@ -279,16 +374,34 @@ float WeightSensor::getCalibrationFactor() const
 }
 
 // =========================================================
-// GET WEIGHT
+// GET FILTERED WEIGHT
 // =========================================================
 
 float WeightSensor::getWeight() const
 {
-    return weight;
+    return filteredWeight;
 }
 
 // =========================================================
-// READY STATUS
+// GET RAW WEIGHT
+// =========================================================
+
+float WeightSensor::getRawWeight() const
+{
+    return rawWeight;
+}
+
+// =========================================================
+// STABLE
+// =========================================================
+
+bool WeightSensor::isStable() const
+{
+    return stable;
+}
+
+// =========================================================
+// READY
 // =========================================================
 
 bool WeightSensor::isReady() const
@@ -297,7 +410,7 @@ bool WeightSensor::isReady() const
 }
 
 // =========================================================
-// TARE STATUS
+// TARING
 // =========================================================
 
 bool WeightSensor::isTaring() const

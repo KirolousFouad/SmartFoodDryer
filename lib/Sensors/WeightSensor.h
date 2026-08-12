@@ -13,28 +13,53 @@ public:
         uint8_t clockPin
     );
 
-    // Initialization
+    // =================================================
+    // INITIALIZATION
+    // =================================================
+
     void begin();
 
     // Must be called continuously from Application::update()
     void update();
 
-    // Start tare operation
+    // =================================================
+    // TARE
+    // =================================================
+
     void tare();
 
-    // Set calibration factor
+    // =================================================
+    // CALIBRATION
+    // =================================================
+
     void setCalibrationFactor(float factor);
 
-    // Get calibration factor
     float getCalibrationFactor() const;
 
-    // Get current filtered weight in grams
+    // =================================================
+    // WEIGHT
+    // =================================================
+
+    // Filtered weight in grams
     float getWeight() const;
 
-    // Check whether HX711 is ready
+    // Last raw HX711 weight in grams
+    float getRawWeight() const;
+
+    // =================================================
+    // STABILITY
+    // =================================================
+
+    // True when weight has remained within the
+    // configured stability range.
+    bool isStable() const;
+
+    // =================================================
+    // STATUS
+    // =================================================
+
     bool isReady() const;
 
-    // Check whether tare is currently running
     bool isTaring() const;
 
 private:
@@ -49,13 +74,16 @@ private:
     // WEIGHT
     // =================================================
 
-    float weight;
+    float rawWeight;
+
+    float filteredWeight;
 
     // =================================================
     // STATUS
     // =================================================
 
     bool ready;
+
     bool taring;
 
     // =================================================
@@ -63,6 +91,26 @@ private:
     // =================================================
 
     float calibrationFactor;
+
+    // =================================================
+    // FILTER
+    // =================================================
+
+    float filterAlpha;
+
+    bool filterInitialized;
+
+    // =================================================
+    // STABILITY
+    // =================================================
+
+    float stabilityRange;
+
+    unsigned long stabilityStartTime;
+
+    unsigned long stabilityTime;
+
+    bool stable;
 };
 
 #endif
