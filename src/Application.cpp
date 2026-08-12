@@ -13,31 +13,30 @@ Application::Application()
       encoder(
           ENCODER_CLK,
           ENCODER_DT,
-          ENCODER_SW
-      ),
+          ENCODER_SW),
 
       menuManager(),
 
       dryer(
           CIRCULATION_FAN_PIN,
-          COOLING_FAN_PWM_PIN
-      ),
+          COOLING_FAN_PWM_PIN),
 
       scr(
           SCR_INCREASE_PIN,
-          SCR_DECREASE_PIN
-      ),
+          SCR_DECREASE_PIN),
 
       temperatureManager(
           DS18B20_PIN,
           MAX6675_SCK,
           MAX6675_CS,
-          MAX6675_SO
-      ),
+          MAX6675_SO),
 
       settings(),
 
       state(STATE_MENU),
+      weightSensor(
+          HX711_DOUT,
+          HX711_SCK),
 
       lastHeartbeat(0),
       dryingStartTime(0),
@@ -154,6 +153,15 @@ void Application::begin()
     Serial.println("[INIT] SCR OK");
 
     // =================================================
+    // HX711
+    // =================================================
+
+    Serial.println("[INIT] Weight Sensor...");
+
+    weightSensor.begin();
+
+    Serial.println("[INIT] Weight Sensor OK");
+    // =================================================
     // INITIAL SCR RESET
     // =================================================
 
@@ -230,6 +238,11 @@ void Application::update()
 
     EncoderEvent event =
         encoder.getEvent();
+    // =================================================
+    // WEIGHT SENSOR
+    // =================================================
+
+    weightSensor.update();
 
     // =================================================
     // TEMPERATURE

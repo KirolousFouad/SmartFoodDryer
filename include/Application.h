@@ -12,6 +12,7 @@
 #include "TemperatureManager.h"
 #include "RecipeDatabase.h"
 #include "DryerSettings.h"
+#include "WeightSensor.h"
 
 // =====================================================
 // SAFETY
@@ -81,6 +82,8 @@ private:
     // =================================================
 
     ApplicationState state;
+
+    WeightSensor weightSensor;
 
     // =================================================
     // TIMERS
