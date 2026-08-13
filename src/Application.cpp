@@ -796,53 +796,33 @@ void Application::stopSCRMovement()
     targetSoftwarePower =
         currentSoftwarePower;
 }
-
 // =====================================================
 // TARGET TEMPERATURE HOLD
 // =====================================================
 
 void Application::checkTargetTemperatureHold()
 {
+    /*
+     * Temperature is used for heater control only.
+     *
+     * Drying completion is determined by
+     * the target weight.
+     *
+     * Therefore this function must NOT transition
+     * the application to STATE_FINISHED.
+     */
+
     if (!targetReached)
     {
         return;
     }
 
     /*
-     * Make sure the heater is already OFF.
+     * Keep heater power at zero while the chamber
+     * temperature is at or above the target.
      */
 
     targetSoftwarePower = 0;
-
-    if (millis() -
-        targetReachedStartTime >= 20000UL)
-    {
-        Serial.println();
-        Serial.println("==============================");
-        Serial.println(" SIMULATION FINISHED");
-        Serial.println("==============================");
-
-        Serial.println(
-            "Target temperature maintained for 20 seconds."
-        );
-
-        dryer.stop();
-
-        heaterEnabled = false;
-
-        targetSoftwarePower = 0;
-
-        /*
-         * Start SCR reset but DO NOT block.
-         */
-        startSCRReset();
-
-        state = STATE_FINISHED;
-
-        finishScreenShown = false;
-
-        drawFinishedScreen();
-    }
 }
 
 // =====================================================
@@ -1546,15 +1526,11 @@ void Application::drawRunningScreen()
     float average =
         temperatureManager.getAverageTemperature();
 
-    float hot =
-        temperatureManager.getHotTemperature();
-
     char line1[17];
     char line2[17];
 
     // =================================================
     // LINE 1
-    // Average temperature + target temperature
     // =================================================
 
     if (isnan(average))
@@ -1587,40 +1563,36 @@ void Application::drawRunningScreen()
     }
 
     // =================================================
-    // LINE 2
-    // Hot temperature
+    // LINE 2 - WEIGHT
     // =================================================
 
-    if (isnan(hot))
-    {
-        snprintf(
-            line2,
-            sizeof(line2),
-            "HOT: --.-C"
-        );
-    }
-    else
-    {
-        char hotText[8];
+    float currentWeight =
+        weightSensor.getWeight();
 
-        dtostrf(
-            hot,
-            4,
-            1,
-            hotText
-        );
-
-        snprintf(
-            line2,
-            sizeof(line2),
-            "HOT:%sC",
-            hotText
-        );
+    if (currentWeight < 0.0f)
+    {
+        currentWeight = 0.0f;
     }
+
+    char weightText[8];
+
+    dtostrf(
+        currentWeight,
+        4,
+        0,
+        weightText
+    );
+
+    snprintf(
+        line2,
+        sizeof(line2),
+        "W:%sg >%4ug",
+        weightText,
+        (unsigned int)targetWeight
+    );
 
     // =================================================
     // LCD
-    // Clear both rows completely
     // =================================================
 
     display.print(
@@ -1634,10 +1606,6 @@ void Application::drawRunningScreen()
         1,
         "                "
     );
-
-    // =================================================
-    // Write new values
-    // =================================================
 
     display.print(
         0,
@@ -1925,81 +1893,228 @@ void Application::captureStartingWeight()
         " g"
     );
 }
-// =========================================================
-// CHECK TARGET WEIGHT
-// =========================================================
+// =====================================================
+// TARGET WEIGHT CHECK
+// =====================================================
 
 void Application::checkTargetWeight()
 {
+    // =================================================
+    // SAFETY
+    // =================================================
+
+    if (state != STATE_RUNNING)
+    {
+        return;
+    }
+
+    if (!weightSensor.isReady())
+    {
+        return;
+    }
+
+    if (weightSensor.isTaring())
+    {
+        return;
+    }
+
+    // =================================================
+    // CURRENT WEIGHT
+    // =================================================
+
+    currentWeight =
+        weightSensor.getWeight();
+
     // -------------------------------------------------
-    // Target must be valid
+    // Protect against invalid negative readings
     // -------------------------------------------------
+
+    if (currentWeight < 0.0f)
+    {
+        currentWeight = 0.0f;
+    }
+
+    // =================================================
+    // VALIDATE TARGET
+    // =================================================
+
+    if (startingWeight <= 0.0f)
+    {
+        return;
+    }
 
     if (targetWeight <= 0.0f)
     {
         return;
     }
 
-    // -------------------------------------------------
-    // Already finished
-    // -------------------------------------------------
+    /*
+     * Target weight must be lower than
+     * the starting weight.
+     */
 
-    if (weightTargetReached)
+    if (targetWeight >= startingWeight)
     {
         return;
     }
 
-    // -------------------------------------------------
-    // Check whether target has been reached
-    // -------------------------------------------------
+    // =================================================
+    // TARGET NOT YET REACHED
+    // =================================================
+
+    if (currentWeight > targetWeight)
+    {
+        /*
+         * If the weight rises above the target again,
+         * cancel the target confirmation timer.
+         */
+
+        if (weightTargetStartTime != 0)
+        {
+            Serial.println(
+                "[WEIGHT] Target no longer reached"
+            );
+        }
+
+        weightTargetStartTime = 0;
+
+        weightTargetReached = false;
+
+        return;
+    }
+
+    // =================================================
+    // TARGET WEIGHT REACHED
+    // =================================================
 
     if (currentWeight <= targetWeight)
     {
-        // Start confirmation timer
+        // -------------------------------------------------
+        // First detection
+        // -------------------------------------------------
+
         if (weightTargetStartTime == 0)
         {
             weightTargetStartTime =
                 millis();
 
+            weightTargetReached =
+                false;
+
+            Serial.println();
             Serial.println(
-                "[WEIGHT] Target reached - "
-                "starting confirmation"
+                "[WEIGHT] Target weight reached"
+            );
+
+            Serial.print(
+                "[WEIGHT] Current: "
+            );
+
+            Serial.print(
+                currentWeight,
+                2
+            );
+
+            Serial.println(
+                " g"
+            );
+
+            Serial.println(
+                "[WEIGHT] Waiting for stable weight..."
             );
         }
 
         // -------------------------------------------------
-        // Require the target condition to remain valid
+        // Weight must be stable
         // -------------------------------------------------
 
-        constexpr unsigned long TARGET_HOLD_TIME =
-            5000UL;
-
-        if (millis() -
-            weightTargetStartTime >=
-            TARGET_HOLD_TIME)
+        if (!weightSensor.isStable())
         {
-            weightTargetReached = true;
+            /*
+             * The weight is below the target,
+             * but the load cell is still moving.
+             *
+             * Do NOT finish the drying cycle.
+             */
+
+            weightTargetReached =
+                false;
 
             Serial.println(
-                "[WEIGHT] Target weight confirmed"
+                "[WEIGHT] Target reached but weight is NOT stable"
             );
+
+            return;
+        }
+
+        // =================================================
+        // STABLE TARGET
+        // =================================================
+
+        if (millis() -
+            weightTargetStartTime >= 5000UL)
+        {
+            weightTargetReached =
+                true;
+
+            Serial.println();
+            Serial.println(
+                "=============================="
+            );
+
+            Serial.println(
+                "[WEIGHT] TARGET WEIGHT CONFIRMED"
+            );
+
+            Serial.println(
+                "=============================="
+            );
+
+            Serial.print(
+                "[WEIGHT] Starting: "
+            );
+
+            Serial.print(
+                startingWeight,
+                2
+            );
+
+            Serial.println(
+                " g"
+            );
+
+            Serial.print(
+                "[WEIGHT] Target: "
+            );
+
+            Serial.print(
+                targetWeight,
+                2
+            );
+
+            Serial.println(
+                " g"
+            );
+
+            Serial.print(
+                "[WEIGHT] Final: "
+            );
+
+            Serial.print(
+                currentWeight,
+                2
+            );
+
+            Serial.println(
+                " g"
+            );
+
+            // -------------------------------------------------
+            // Finish drying
+            // -------------------------------------------------
 
             finishDrying();
         }
-    }
-    else
-    {
-        // Weight went above target again.
-        // Cancel confirmation timer.
-
-        if (weightTargetStartTime != 0)
-        {
-            Serial.println(
-                "[WEIGHT] Target confirmation cancelled"
-            );
-        }
-
-        weightTargetStartTime = 0;
     }
 }
 // =========================================================
