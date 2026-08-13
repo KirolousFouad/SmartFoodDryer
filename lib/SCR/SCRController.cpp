@@ -48,7 +48,7 @@ void SCRController::pressButton(uint8_t pin)
     // Release
     digitalWrite(pin, HIGH);
 
-    // Give SCR time to register one physical press
+    // Give SCR time to register the physical press
     delay(120);
 }
 
@@ -59,11 +59,12 @@ void SCRController::pressButton(uint8_t pin)
 void SCRController::increase()
 {
     if (currentPower >= MAX_POWER)
+    {
         return;
+    }
 
     pressButton(increasePin);
 
-    // Exactly ONE physical pulse = ONE software %
     currentPower++;
 
     Serial.print("[SCR] Power increased to ");
@@ -78,11 +79,12 @@ void SCRController::increase()
 void SCRController::decrease()
 {
     if (currentPower <= MIN_POWER)
+    {
         return;
+    }
 
     pressButton(decreasePin);
 
-    // Exactly ONE physical pulse = ONE software %
     currentPower--;
 
     Serial.print("[SCR] Power decreased to ");
@@ -91,9 +93,41 @@ void SCRController::decrease()
 }
 
 // =====================================================
-// SET POWER
+// RESET ONE PHYSICAL STEP
 // =====================================================
 
+void SCRController::resetStep()
+{
+    /*
+     * This method is intentionally different from decrease().
+     *
+     * During a physical reset we do NOT trust the software
+     * power value because the actual SCR position may be
+     * unknown after power-up or after an abnormal condition.
+     *
+     * Therefore:
+     *
+     * 1. Always send one physical DECREASE pulse.
+     * 2. Force the software state to 0%.
+     *
+     * Application can call this repeatedly.
+     *
+     * This guarantees that enough physical decrease pulses
+     * can be sent even after currentPower has already become 0.
+     */
+
+    pressButton(decreasePin);
+
+    currentPower = 0;
+
+    Serial.println(
+        "[SCR] Reset pulse sent -> software power 0%"
+    );
+}
+
+// =====================================================
+// SET POWER
+// =====================================================
 void SCRController::setPower(uint8_t percent)
 {
     percent = constrain(
@@ -102,37 +136,30 @@ void SCRController::setPower(uint8_t percent)
         MAX_POWER
     );
 
-    if (percent == currentPower)
-        return;
-
-    Serial.print("[SCR] Setting power from ");
-    Serial.print(currentPower);
-    Serial.print("% to ");
-    Serial.print(percent);
-    Serial.println("%");
-
-    // Increase one physical step at a time
-    while (currentPower < percent)
-    {
-        increase();
-    }
-
-    // Decrease one physical step at a time
-    while (currentPower > percent)
-    {
-        decrease();
-    }
+    moveOneStepToward(percent);
 }
 
 // =====================================================
 // RESET SCR TO ZERO
 // =====================================================
+
 void SCRController::resetToZero()
 {
-    Serial.println("[SCR] Forcing physical SCR to 0%...");
+    Serial.println(
+        "[SCR] Forcing physical SCR to 0%..."
+    );
 
-    // Send 100 physical decrease pulses.
-    // The SCR will stop at 0%.
+    /*
+     * The physical SCR position may be unknown.
+     *
+     * Therefore send 100 physical decrease pulses.
+     *
+     * This function is intentionally blocking.
+     *
+     * The Application should use resetStep() instead
+     * during normal operation.
+     */
+
     for (uint8_t i = 0; i < 100; i++)
     {
         pressButton(decreasePin);
@@ -140,7 +167,9 @@ void SCRController::resetToZero()
 
     currentPower = 0;
 
-    Serial.println("[SCR] Physical SCR reset complete: 0%");
+    Serial.println(
+        "[SCR] Physical SCR reset complete: 0%"
+    );
 }
 
 // =====================================================
@@ -151,10 +180,10 @@ uint8_t SCRController::getPower() const
 {
     return currentPower;
 }
+
 // =====================================================
 // MOVE ONE STEP TOWARD TARGET
 // =====================================================
-
 bool SCRController::moveOneStepToward(uint8_t targetPower)
 {
     targetPower = constrain(
@@ -163,11 +192,11 @@ bool SCRController::moveOneStepToward(uint8_t targetPower)
         MAX_POWER
     );
 
-    // Already there
     if (currentPower == targetPower)
+    {
         return true;
+    }
 
-    // ONE physical pulse only
     if (currentPower < targetPower)
     {
         increase();
