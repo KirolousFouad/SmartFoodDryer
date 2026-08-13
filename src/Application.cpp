@@ -38,11 +38,16 @@ Application::Application()
           HX711_DOUT,
           HX711_SCK),
 
-    startingWeight(0.0f),
-    currentWeight(0.0f),
-    targetWeight(0.0f),
-    weightTargetStartTime(0),
-    weightTargetReached(false),
+      currentWeight(0.0f),
+      targetWeight(0.0f),
+      weightTargetStartTime(0),
+      weightTargetReached(false),
+      startingWeight(0.0f),
+      finalWeight(0.0f),
+      startingWeightCaptured(false),
+      startingWeightStableStart(0),
+      targetWeightDetected(false),
+      targetWeightStartTime(0),
 
       lastHeartbeat(0),
       dryingStartTime(0),
@@ -1816,12 +1821,16 @@ void Application::drawErrorScreen()
 // =========================================================
 // WEIGHT CONTROL
 // =========================================================
-
 void Application::updateWeightControl()
 {
-    // -------------------------------------------------
-    // Safety check
-    // -------------------------------------------------
+    if (state != STATE_RUNNING)
+    {
+        return;
+    }
+
+    // =================================================
+    // SENSOR VALIDATION
+    // =================================================
 
     if (!weightSensor.isReady())
     {
@@ -1830,58 +1839,104 @@ void Application::updateWeightControl()
 
     if (weightSensor.isTaring())
     {
+        startingWeightStableStart = 0;
         return;
     }
 
-    // -------------------------------------------------
-    // Read current filtered weight
-    // -------------------------------------------------
-
-    currentWeight =
+    float currentWeight =
         weightSensor.getWeight();
 
-    // -------------------------------------------------
-    // Invalid reading
-    // -------------------------------------------------
-
-    if (isnan(currentWeight))
+    if (currentWeight < 0.0f)
     {
+        currentWeight = 0.0f;
+    }
+
+    // =================================================
+    // STARTING WEIGHT
+    // =================================================
+
+    if (!startingWeightCaptured)
+    {
+        captureStartingWeight();
+
         return;
     }
 
-    // -------------------------------------------------
-    // Check target weight
-    // -------------------------------------------------
+    // =================================================
+    // TARGET WEIGHT
+    // =================================================
 
     checkTargetWeight();
 }
 // =========================================================
 // CAPTURE STARTING WEIGHT
 // =========================================================
-
 void Application::captureStartingWeight()
 {
-    if (!weightSensor.isReady())
+    float currentWeight =
+        weightSensor.getWeight();
+
+    if (currentWeight < 0.0f)
     {
+        currentWeight = 0.0f;
+    }
+
+    // =================================================
+    // REQUIRE STABLE WEIGHT
+    // =================================================
+
+    if (!weightSensor.isStable())
+    {
+        startingWeightStableStart = 0;
+
+        return;
+    }
+
+    // =================================================
+    // START STABILITY TIMER
+    // =================================================
+
+    if (startingWeightStableStart == 0)
+    {
+        startingWeightStableStart =
+            millis();
+
         Serial.println(
-            "[WEIGHT] Cannot capture starting weight"
+            "[WEIGHT] Starting weight stability detected"
         );
 
         return;
     }
 
+    // =================================================
+    // WAIT FOR STABILITY PERIOD
+    // =================================================
+
+    if (millis() -
+        startingWeightStableStart <
+        START_WEIGHT_STABLE_TIME)
+    {
+        return;
+    }
+
+    // =================================================
+    // CAPTURE STARTING WEIGHT
+    // =================================================
+
     startingWeight =
-        weightSensor.getWeight();
+        currentWeight;
 
-    currentWeight =
-        startingWeight;
+    startingWeightCaptured =
+        true;
 
-    weightTargetStartTime = 0;
+    targetWeightDetected =
+        false;
 
-    weightTargetReached = false;
+    targetWeightStartTime =
+        0;
 
     Serial.print(
-        "[WEIGHT] Starting weight: "
+        "[WEIGHT] Starting weight captured: "
     );
 
     Serial.print(
@@ -1896,7 +1951,6 @@ void Application::captureStartingWeight()
 // =====================================================
 // TARGET WEIGHT CHECK
 // =====================================================
-
 void Application::checkTargetWeight()
 {
     // =================================================
@@ -1925,10 +1979,6 @@ void Application::checkTargetWeight()
     currentWeight =
         weightSensor.getWeight();
 
-    // -------------------------------------------------
-    // Protect against invalid negative readings
-    // -------------------------------------------------
-
     if (currentWeight < 0.0f)
     {
         currentWeight = 0.0f;
@@ -1948,11 +1998,7 @@ void Application::checkTargetWeight()
         return;
     }
 
-    /*
-     * Target weight must be lower than
-     * the starting weight.
-     */
-
+    // Target must be lower than starting weight
     if (targetWeight >= startingWeight)
     {
         return;
@@ -1962,13 +2008,9 @@ void Application::checkTargetWeight()
     // TARGET NOT YET REACHED
     // =================================================
 
-    if (currentWeight > targetWeight)
+    if (currentWeight >
+        (targetWeight + TARGET_WEIGHT_TOLERANCE))
     {
-        /*
-         * If the weight rises above the target again,
-         * cancel the target confirmation timer.
-         */
-
         if (weightTargetStartTime != 0)
         {
             Serial.println(
@@ -1977,7 +2019,6 @@ void Application::checkTargetWeight()
         }
 
         weightTargetStartTime = 0;
-
         weightTargetReached = false;
 
         return;
@@ -1987,7 +2028,8 @@ void Application::checkTargetWeight()
     // TARGET WEIGHT REACHED
     // =================================================
 
-    if (currentWeight <= targetWeight)
+    if (currentWeight <=
+        (targetWeight + TARGET_WEIGHT_TOLERANCE))
     {
         // -------------------------------------------------
         // First detection
@@ -2019,6 +2061,19 @@ void Application::checkTargetWeight()
                 " g"
             );
 
+            Serial.print(
+                "[WEIGHT] Target: "
+            );
+
+            Serial.print(
+                targetWeight,
+                2
+            );
+
+            Serial.println(
+                " g"
+            );
+
             Serial.println(
                 "[WEIGHT] Waiting for stable weight..."
             );
@@ -2030,19 +2085,8 @@ void Application::checkTargetWeight()
 
         if (!weightSensor.isStable())
         {
-            /*
-             * The weight is below the target,
-             * but the load cell is still moving.
-             *
-             * Do NOT finish the drying cycle.
-             */
-
             weightTargetReached =
                 false;
-
-            Serial.println(
-                "[WEIGHT] Target reached but weight is NOT stable"
-            );
 
             return;
         }
@@ -2052,7 +2096,8 @@ void Application::checkTargetWeight()
         // =================================================
 
         if (millis() -
-            weightTargetStartTime >= 5000UL)
+            weightTargetStartTime >=
+            TARGET_WEIGHT_HOLD_TIME)
         {
             weightTargetReached =
                 true;

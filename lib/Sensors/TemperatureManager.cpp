@@ -13,15 +13,24 @@ TemperatureManager::TemperatureManager(
 )
     : oneWire(oneWirePin),
       ds18b20(&oneWire),
-      thermocouple(thermoCLK, thermoCS, thermoDO),
+      thermocouple(
+          thermoCLK,
+          thermoCS,
+          thermoDO
+      ),
       sensorCount(0),
       lastDS18B20Request(0),
       ds18b20ConversionStarted(false),
+
       sensor1Temperature(NAN),
       sensor2Temperature(NAN),
       sensor3Temperature(NAN),
+
       averageTemperature(NAN),
-      hotTemperature(NAN)
+      hotTemperature(NAN),
+
+      temperatureErrorCount(0),
+      temperatureError(false)
 {
 }
 
@@ -37,9 +46,6 @@ void TemperatureManager::begin()
 
     ds18b20.begin();
 
-    // IMPORTANT:
-    // Do not block the application while waiting
-    // for the DS18B20 conversion.
     ds18b20.setWaitForConversion(false);
 
     sensorCount =
@@ -49,35 +55,60 @@ void TemperatureManager::begin()
         "DS18B20 sensors found: "
     );
 
-    Serial.println(sensorCount);
+    Serial.println(
+        sensorCount
+    );
 
+    // -----------------------------------------------------
     // Start first conversion
+    // -----------------------------------------------------
+
     ds18b20.requestTemperatures();
 
-    lastDS18B20Request = millis();
+    lastDS18B20Request =
+        millis();
 
-    ds18b20ConversionStarted = true;
+    ds18b20ConversionStarted =
+        true;
 
     // =====================================================
     // MAX6675
     // =====================================================
 
-    hotTemperature =
+    float initialHotTemperature =
         thermocouple.readCelsius();
 
-    Serial.print(
-        "MAX6675 Temperature: "
-    );
-
-    if (isnan(hotTemperature))
+    if (!isnan(initialHotTemperature))
     {
-        Serial.println("ERROR");
+        hotTemperature =
+            hotFilter.update(
+                initialHotTemperature
+            );
+
+        Serial.print(
+            "MAX6675 Temperature: "
+        );
+
+        Serial.print(
+            hotTemperature
+        );
+
+        Serial.println(" C");
     }
     else
     {
-        Serial.print(hotTemperature);
-        Serial.println(" C");
+        Serial.println(
+            "MAX6675 Temperature: waiting..."
+        );
     }
+
+    // =====================================================
+    // ERROR STATE
+    // =====================================================
+
+    temperatureErrorCount = 0;
+
+    temperatureError = false;
 }
 
 // =========================================================
@@ -90,23 +121,21 @@ void TemperatureManager::update()
     // DS18B20
     // =====================================================
 
-    /*
-     * DS18B20 conversion takes time.
-     *
-     * We start the conversion and return immediately.
-     * On a later update, after enough time has passed,
-     * we read the result and start the next conversion.
-     */
-
     if (ds18b20ConversionStarted)
     {
-        // 750 ms is the worst-case conversion time
-        // for a 12-bit DS18B20.
-        if (millis() - lastDS18B20Request >= 750)
+        /*
+         * DS18B20 conversion can take up to
+         * approximately 750 ms at 12-bit resolution.
+         *
+         * Do not read before conversion is complete.
+         */
+
+        if (millis() -
+            lastDS18B20Request >= 750UL)
         {
-            // ---------------------------------------------
-            // Read completed conversion
-            // ---------------------------------------------
+            // =================================================
+            // READ SENSORS
+            // =================================================
 
             float rawSensor1 = NAN;
             float rawSensor2 = NAN;
@@ -130,28 +159,31 @@ void TemperatureManager::update()
                     ds18b20.getTempCByIndex(2);
             }
 
-            // ---------------------------------------------
-            // Validate
-            // ---------------------------------------------
+            // =================================================
+            // VALIDATE DS18B20
+            // =================================================
 
-            if (rawSensor1 == DEVICE_DISCONNECTED_C)
+            if (rawSensor1 ==
+                DEVICE_DISCONNECTED_C)
             {
                 rawSensor1 = NAN;
             }
 
-            if (rawSensor2 == DEVICE_DISCONNECTED_C)
+            if (rawSensor2 ==
+                DEVICE_DISCONNECTED_C)
             {
                 rawSensor2 = NAN;
             }
 
-            if (rawSensor3 == DEVICE_DISCONNECTED_C)
+            if (rawSensor3 ==
+                DEVICE_DISCONNECTED_C)
             {
                 rawSensor3 = NAN;
             }
 
-            // ---------------------------------------------
-            // Filter DS18B20 sensors
-            // ---------------------------------------------
+            // =================================================
+            // FILTER SENSOR 1
+            // =================================================
 
             if (!isnan(rawSensor1))
             {
@@ -161,6 +193,10 @@ void TemperatureManager::update()
                     );
             }
 
+            // =================================================
+            // FILTER SENSOR 2
+            // =================================================
+
             if (!isnan(rawSensor2))
             {
                 sensor2Temperature =
@@ -168,6 +204,10 @@ void TemperatureManager::update()
                         rawSensor2
                     );
             }
+
+            // =================================================
+            // FILTER SENSOR 3
+            // =================================================
 
             if (!isnan(rawSensor3))
             {
@@ -177,13 +217,15 @@ void TemperatureManager::update()
                     );
             }
 
-            // ---------------------------------------------
-            // Calculate filtered average
-            // ---------------------------------------------
+            // =================================================
+            // CALCULATE AVERAGE
+            // =================================================
 
-            float totalTemperature = 0.0f;
+            float totalTemperature =
+                0.0f;
 
-            uint8_t validSensors = 0;
+            uint8_t validSensors =
+                0;
 
             if (!isnan(sensor1Temperature))
             {
@@ -220,14 +262,10 @@ void TemperatureManager::update()
                         rawAverage
                     );
             }
-            else
-            {
-                averageTemperature = NAN;
-            }
 
-            // ---------------------------------------------
-            // Start next DS18B20 conversion
-            // ---------------------------------------------
+            // =================================================
+            // START NEXT CONVERSION
+            // =================================================
 
             ds18b20.requestTemperatures();
 
@@ -237,7 +275,10 @@ void TemperatureManager::update()
     }
     else
     {
-        // Safety fallback
+        // =================================================
+        // SAFETY FALLBACK
+        // =================================================
+
         ds18b20.requestTemperatures();
 
         lastDS18B20Request =
@@ -256,10 +297,51 @@ void TemperatureManager::update()
 
     if (!isnan(rawHotTemperature))
     {
+        /*
+         * Valid reading.
+         *
+         * Update the filter and clear any temporary
+         * communication error.
+         */
+
         hotTemperature =
             hotFilter.update(
                 rawHotTemperature
             );
+
+        temperatureErrorCount = 0;
+
+        temperatureError = false;
+    }
+    else
+    {
+        /*
+         * IMPORTANT:
+         *
+         * Do NOT immediately declare a temperature error.
+         *
+         * MAX6675 can occasionally return an invalid reading
+         * during communication.
+         */
+
+        if (temperatureErrorCount <
+            MAX_TEMPERATURE_ERRORS)
+        {
+            temperatureErrorCount++;
+        }
+
+        if (temperatureErrorCount >=
+            MAX_TEMPERATURE_ERRORS)
+        {
+            temperatureError = true;
+        }
+
+        /*
+         * Keep the previous valid hotTemperature.
+         *
+         * This prevents the LCD from suddenly displaying
+         * "TEMP ERROR" because of one bad reading.
+         */
     }
 
     // =====================================================
@@ -270,43 +352,107 @@ void TemperatureManager::update()
         "DS18B20 Count: "
     );
 
-    Serial.print(sensorCount);
+    Serial.print(
+        sensorCount
+    );
 
     Serial.print(
         " | S1: "
     );
 
-    Serial.print(sensor1Temperature);
+    if (isnan(sensor1Temperature))
+    {
+        Serial.print("--");
+    }
+    else
+    {
+        Serial.print(
+            sensor1Temperature
+        );
+    }
 
     Serial.print(
         " C | S2: "
     );
 
-    Serial.print(sensor2Temperature);
+    if (isnan(sensor2Temperature))
+    {
+        Serial.print("--");
+    }
+    else
+    {
+        Serial.print(
+            sensor2Temperature
+        );
+    }
 
     Serial.print(
         " C | S3: "
     );
 
-    Serial.print(sensor3Temperature);
+    if (isnan(sensor3Temperature))
+    {
+        Serial.print("--");
+    }
+    else
+    {
+        Serial.print(
+            sensor3Temperature
+        );
+    }
 
     Serial.print(
         " C | AVG: "
     );
 
-    Serial.print(averageTemperature);
+    if (isnan(averageTemperature))
+    {
+        Serial.print("--");
+    }
+    else
+    {
+        Serial.print(
+            averageTemperature
+        );
+    }
 
     Serial.print(
         " C | HOT: "
     );
 
-    Serial.print(hotTemperature);
+    if (isnan(hotTemperature))
+    {
+        Serial.print("--");
+    }
+    else
+    {
+        Serial.print(
+            hotTemperature
+        );
+    }
 
-    Serial.println(" C");
+    Serial.println(
+        " C"
+    );
+
+    // =====================================================
+    // ERROR DEBUG
+    // =====================================================
+
+    if (temperatureError)
+    {
+        Serial.print(
+            "[TEMP ERROR] Invalid MAX6675 readings: "
+        );
+
+        Serial.println(
+            temperatureErrorCount
+        );
+    }
 }
 
 // =========================================================
-// GETTERS
+// GET SENSOR 1
 // =========================================================
 
 float TemperatureManager::getSensor1Temperature() const
@@ -314,27 +460,56 @@ float TemperatureManager::getSensor1Temperature() const
     return sensor1Temperature;
 }
 
+// =========================================================
+// GET SENSOR 2
+// =========================================================
+
 float TemperatureManager::getSensor2Temperature() const
 {
     return sensor2Temperature;
 }
+
+// =========================================================
+// GET SENSOR 3
+// =========================================================
 
 float TemperatureManager::getSensor3Temperature() const
 {
     return sensor3Temperature;
 }
 
+// =========================================================
+// GET AVERAGE
+// =========================================================
+
 float TemperatureManager::getAverageTemperature() const
 {
     return averageTemperature;
 }
+
+// =========================================================
+// GET HOT TEMPERATURE
+// =========================================================
 
 float TemperatureManager::getHotTemperature() const
 {
     return hotTemperature;
 }
 
+// =========================================================
+// GET SENSOR COUNT
+// =========================================================
+
 uint8_t TemperatureManager::getSensorCount() const
 {
     return sensorCount;
+}
+
+// =========================================================
+// TEMPERATURE ERROR
+// =========================================================
+
+bool TemperatureManager::hasTemperatureError() const
+{
+    return temperatureError;
 }

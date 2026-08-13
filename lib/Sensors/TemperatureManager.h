@@ -22,19 +22,33 @@ public:
     void begin();
     void update();
 
-    // Individual filtered DS18B20 temperatures
+    // =====================================================
+    // DS18B20
+    // =====================================================
+
     float getSensor1Temperature() const;
     float getSensor2Temperature() const;
     float getSensor3Temperature() const;
 
-    // Filtered chamber average
+    // =====================================================
+    // AVERAGE
+    // =====================================================
+
     float getAverageTemperature() const;
 
-    // Filtered MAX6675 temperature
+    // =====================================================
+    // MAX6675
+    // =====================================================
+
     float getHotTemperature() const;
 
-    // Number of detected DS18B20 sensors
+    // =====================================================
+    // STATUS
+    // =====================================================
+
     uint8_t getSensorCount() const;
+
+    bool hasTemperatureError() const;
 
 private:
 
@@ -48,6 +62,7 @@ private:
     uint8_t sensorCount;
 
     unsigned long lastDS18B20Request;
+
     bool ds18b20ConversionStarted;
 
     float sensor1Temperature;
@@ -74,6 +89,16 @@ private:
 
     TemperatureFilter averageFilter;
     TemperatureFilter hotFilter;
+
+    // =====================================================
+    // ERROR HANDLING
+    // =====================================================
+
+    uint8_t temperatureErrorCount;
+
+    bool temperatureError;
+
+    static constexpr uint8_t MAX_TEMPERATURE_ERRORS = 3;
 };
 
 #endif
