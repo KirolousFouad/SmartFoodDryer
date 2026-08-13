@@ -38,16 +38,11 @@ Application::Application()
           HX711_DOUT,
           HX711_SCK),
 
+      startingWeight(0.0f),
       currentWeight(0.0f),
       targetWeight(0.0f),
       weightTargetStartTime(0),
       weightTargetReached(false),
-      startingWeight(0.0f),
-      finalWeight(0.0f),
-      startingWeightCaptured(false),
-      startingWeightStableStart(0),
-      targetWeightDetected(false),
-      targetWeightStartTime(0),
 
       lastHeartbeat(0),
       dryingStartTime(0),
@@ -65,7 +60,10 @@ Application::Application()
       targetSoftwarePower(0),
 
       scrResetInProgress(false),
-      scrResetStepsRemaining(0)
+      scrResetStepsRemaining(0),
+      circulationFanOn(false),
+      coolingFanPower(0),
+      lastCoolingFanUpdate(0)
 {
     settings.temperature = 60;
     settings.targetWeight = 1000;
@@ -172,6 +170,37 @@ void Application::begin()
     weightSensor.begin();
 
     Serial.println("[INIT] Weight Sensor OK");
+    // =========================================================
+    // FANS
+    // =========================================================
+
+    Serial.println("[INIT] Fans...");
+
+    pinMode(
+        CIRCULATION_FAN_PIN,
+        OUTPUT);
+
+    pinMode(
+        COOLING_FAN_PWM_PIN,
+        OUTPUT);
+
+    // Start with both fans OFF
+
+    digitalWrite(
+        CIRCULATION_FAN_PIN,
+        LOW);
+
+    analogWrite(
+        COOLING_FAN_PWM_PIN,
+        0);
+
+    circulationFanOn = false;
+
+    coolingFanPower = 0;
+
+    lastCoolingFanUpdate = 0;
+
+    Serial.println("[INIT] Fans OK");
     // =================================================
     // INITIAL SCR RESET
     // =================================================
@@ -307,6 +336,12 @@ void Application::update()
     // =================================================
 
     updateSCRControl();
+
+    // =================================================
+    // FANS
+    // =================================================
+
+    updateFanControl();
 
     // =================================================
     // APPLICATION STATE
@@ -1821,16 +1856,12 @@ void Application::drawErrorScreen()
 // =========================================================
 // WEIGHT CONTROL
 // =========================================================
+
 void Application::updateWeightControl()
 {
-    if (state != STATE_RUNNING)
-    {
-        return;
-    }
-
-    // =================================================
-    // SENSOR VALIDATION
-    // =================================================
+    // -------------------------------------------------
+    // Safety check
+    // -------------------------------------------------
 
     if (!weightSensor.isReady())
     {
@@ -1839,104 +1870,58 @@ void Application::updateWeightControl()
 
     if (weightSensor.isTaring())
     {
-        startingWeightStableStart = 0;
         return;
     }
 
-    float currentWeight =
+    // -------------------------------------------------
+    // Read current filtered weight
+    // -------------------------------------------------
+
+    currentWeight =
         weightSensor.getWeight();
 
-    if (currentWeight < 0.0f)
+    // -------------------------------------------------
+    // Invalid reading
+    // -------------------------------------------------
+
+    if (isnan(currentWeight))
     {
-        currentWeight = 0.0f;
-    }
-
-    // =================================================
-    // STARTING WEIGHT
-    // =================================================
-
-    if (!startingWeightCaptured)
-    {
-        captureStartingWeight();
-
         return;
     }
 
-    // =================================================
-    // TARGET WEIGHT
-    // =================================================
+    // -------------------------------------------------
+    // Check target weight
+    // -------------------------------------------------
 
     checkTargetWeight();
 }
 // =========================================================
 // CAPTURE STARTING WEIGHT
 // =========================================================
+
 void Application::captureStartingWeight()
 {
-    float currentWeight =
-        weightSensor.getWeight();
-
-    if (currentWeight < 0.0f)
+    if (!weightSensor.isReady())
     {
-        currentWeight = 0.0f;
-    }
-
-    // =================================================
-    // REQUIRE STABLE WEIGHT
-    // =================================================
-
-    if (!weightSensor.isStable())
-    {
-        startingWeightStableStart = 0;
-
-        return;
-    }
-
-    // =================================================
-    // START STABILITY TIMER
-    // =================================================
-
-    if (startingWeightStableStart == 0)
-    {
-        startingWeightStableStart =
-            millis();
-
         Serial.println(
-            "[WEIGHT] Starting weight stability detected"
+            "[WEIGHT] Cannot capture starting weight"
         );
 
         return;
     }
 
-    // =================================================
-    // WAIT FOR STABILITY PERIOD
-    // =================================================
-
-    if (millis() -
-        startingWeightStableStart <
-        START_WEIGHT_STABLE_TIME)
-    {
-        return;
-    }
-
-    // =================================================
-    // CAPTURE STARTING WEIGHT
-    // =================================================
-
     startingWeight =
-        currentWeight;
+        weightSensor.getWeight();
 
-    startingWeightCaptured =
-        true;
+    currentWeight =
+        startingWeight;
 
-    targetWeightDetected =
-        false;
+    weightTargetStartTime = 0;
 
-    targetWeightStartTime =
-        0;
+    weightTargetReached = false;
 
     Serial.print(
-        "[WEIGHT] Starting weight captured: "
+        "[WEIGHT] Starting weight: "
     );
 
     Serial.print(
@@ -1951,6 +1936,7 @@ void Application::captureStartingWeight()
 // =====================================================
 // TARGET WEIGHT CHECK
 // =====================================================
+
 void Application::checkTargetWeight()
 {
     // =================================================
@@ -1979,6 +1965,10 @@ void Application::checkTargetWeight()
     currentWeight =
         weightSensor.getWeight();
 
+    // -------------------------------------------------
+    // Protect against invalid negative readings
+    // -------------------------------------------------
+
     if (currentWeight < 0.0f)
     {
         currentWeight = 0.0f;
@@ -1998,7 +1988,11 @@ void Application::checkTargetWeight()
         return;
     }
 
-    // Target must be lower than starting weight
+    /*
+     * Target weight must be lower than
+     * the starting weight.
+     */
+
     if (targetWeight >= startingWeight)
     {
         return;
@@ -2008,9 +2002,13 @@ void Application::checkTargetWeight()
     // TARGET NOT YET REACHED
     // =================================================
 
-    if (currentWeight >
-        (targetWeight + TARGET_WEIGHT_TOLERANCE))
+    if (currentWeight > targetWeight)
     {
+        /*
+         * If the weight rises above the target again,
+         * cancel the target confirmation timer.
+         */
+
         if (weightTargetStartTime != 0)
         {
             Serial.println(
@@ -2019,6 +2017,7 @@ void Application::checkTargetWeight()
         }
 
         weightTargetStartTime = 0;
+
         weightTargetReached = false;
 
         return;
@@ -2028,8 +2027,7 @@ void Application::checkTargetWeight()
     // TARGET WEIGHT REACHED
     // =================================================
 
-    if (currentWeight <=
-        (targetWeight + TARGET_WEIGHT_TOLERANCE))
+    if (currentWeight <= targetWeight)
     {
         // -------------------------------------------------
         // First detection
@@ -2061,19 +2059,6 @@ void Application::checkTargetWeight()
                 " g"
             );
 
-            Serial.print(
-                "[WEIGHT] Target: "
-            );
-
-            Serial.print(
-                targetWeight,
-                2
-            );
-
-            Serial.println(
-                " g"
-            );
-
             Serial.println(
                 "[WEIGHT] Waiting for stable weight..."
             );
@@ -2085,8 +2070,19 @@ void Application::checkTargetWeight()
 
         if (!weightSensor.isStable())
         {
+            /*
+             * The weight is below the target,
+             * but the load cell is still moving.
+             *
+             * Do NOT finish the drying cycle.
+             */
+
             weightTargetReached =
                 false;
+
+            Serial.println(
+                "[WEIGHT] Target reached but weight is NOT stable"
+            );
 
             return;
         }
@@ -2096,8 +2092,7 @@ void Application::checkTargetWeight()
         // =================================================
 
         if (millis() -
-            weightTargetStartTime >=
-            TARGET_WEIGHT_HOLD_TIME)
+            weightTargetStartTime >= 5000UL)
         {
             weightTargetReached =
                 true;
@@ -2248,4 +2243,169 @@ void Application::finishDrying()
     state = STATE_FINISHED;
 
     finishScreenShown = false;
+}
+// =========================================================
+// CIRCULATION FAN
+// =========================================================
+
+void Application::setCirculationFan(bool on)
+{
+    if (on)
+    {
+        digitalWrite(
+            CIRCULATION_FAN_PIN,
+            HIGH
+        );
+
+        circulationFanOn = true;
+    }
+    else
+    {
+        digitalWrite(
+            CIRCULATION_FAN_PIN,
+            LOW
+        );
+
+        circulationFanOn = false;
+    }
+}
+// =========================================================
+// COOLING FAN PWM
+// =========================================================
+
+void Application::setCoolingFanPower(uint8_t power)
+{
+    if (power > 100)
+    {
+        power = 100;
+    }
+
+    coolingFanPower = power;
+
+    uint8_t pwmValue =
+        map(
+            power,
+            0,
+            100,
+            0,
+            255
+        );
+
+    analogWrite(
+        COOLING_FAN_PWM_PIN,
+        pwmValue
+    );
+}
+// =========================================================
+// FAN CONTROL
+// =========================================================
+
+void Application::updateFanControl()
+{
+    // =====================================================
+    // CIRCULATION FAN
+    // =====================================================
+
+    if (state == STATE_RUNNING)
+    {
+        setCirculationFan(true);
+    }
+    else
+    {
+        setCirculationFan(false);
+    }
+
+    // =====================================================
+    // COOLING FAN
+    // =====================================================
+
+    // Cooling fan is only needed during drying.
+    if (state != STATE_RUNNING)
+    {
+        setCoolingFanPower(0);
+
+        return;
+    }
+
+    float temperature =
+        temperatureManager.getAverageTemperature();
+
+    float hotTemperature =
+        temperatureManager.getHotTemperature();
+
+    // -----------------------------------------------------
+    // Invalid temperature
+    // -----------------------------------------------------
+
+    if (isnan(temperature))
+    {
+        setCoolingFanPower(0);
+
+        return;
+    }
+
+    // =====================================================
+    // CRITICAL TEMPERATURE
+    // =====================================================
+
+    if (!isnan(hotTemperature) &&
+        hotTemperature >= MAX_SAFE_TEMP)
+    {
+        setCoolingFanPower(100);
+
+        Serial.println(
+            "[FAN] CRITICAL TEMP -> COOLING FAN 100%"
+        );
+
+        return;
+    }
+
+    // =====================================================
+    // HIGH TEMPERATURE
+    // =====================================================
+
+    /*
+     * Cooling fan starts when chamber temperature
+     * approaches/exceeds the target.
+     *
+     * Example:
+     *
+     * Target = 70 C
+     *
+     * < 70 C       -> OFF
+     * 70-72 C      -> 30%
+     * 72-75 C      -> 60%
+     * 75-78 C      -> 80%
+     * >= 78 C      -> 100%
+     */
+
+    float targetTemperature =
+        settings.temperature;
+
+    uint8_t newCoolingPower = 0;
+
+    if (temperature >= targetTemperature + 8.0f)
+    {
+        newCoolingPower = 100;
+    }
+    else if (temperature >= targetTemperature + 5.0f)
+    {
+        newCoolingPower = 80;
+    }
+    else if (temperature >= targetTemperature + 2.0f)
+    {
+        newCoolingPower = 60;
+    }
+    else if (temperature >= targetTemperature)
+    {
+        newCoolingPower = 30;
+    }
+    else
+    {
+        newCoolingPower = 0;
+    }
+
+    setCoolingFanPower(
+        newCoolingPower
+    );
 }

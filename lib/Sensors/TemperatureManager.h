@@ -48,8 +48,6 @@ public:
 
     uint8_t getSensorCount() const;
 
-    bool hasTemperatureError() const;
-
 private:
 
     // =====================================================
@@ -57,6 +55,7 @@ private:
     // =====================================================
 
     OneWire oneWire;
+
     DallasTemperature ds18b20;
 
     uint8_t sensorCount;
@@ -89,16 +88,6 @@ private:
 
     TemperatureFilter averageFilter;
     TemperatureFilter hotFilter;
-
-    // =====================================================
-    // ERROR HANDLING
-    // =====================================================
-
-    uint8_t temperatureErrorCount;
-
-    bool temperatureError;
-
-    static constexpr uint8_t MAX_TEMPERATURE_ERRORS = 3;
 };
 
 #endif

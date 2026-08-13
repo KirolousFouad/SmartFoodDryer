@@ -14,15 +14,11 @@
 #include "DryerSettings.h"
 #include "WeightSensor.h"
 
+// =====================================================
+// SAFETY
+// =====================================================
+
 constexpr float MAX_SAFE_TEMP = 120.0f;
-
-// =====================================================
-// WEIGHT CONTROL
-// =====================================================
-
-constexpr float TARGET_WEIGHT_TOLERANCE = 5.0f;
-constexpr unsigned long START_WEIGHT_STABLE_TIME = 3000;
-constexpr unsigned long TARGET_WEIGHT_HOLD_TIME = 5000;
 
 // =====================================================
 // APPLICATION STATES
@@ -91,22 +87,13 @@ private:
     // DRYING WEIGHT CONTROL
     // =================================================
 
-    
+    float startingWeight;
     float currentWeight;
     float targetWeight;
+
     unsigned long weightTargetStartTime;
 
     bool weightTargetReached;
-
-    float startingWeight;
-    float finalWeight;
-
-    
-    bool startingWeightCaptured;
-    unsigned long startingWeightStableStart;
-
-    bool targetWeightDetected;
-    unsigned long targetWeightStartTime;
     // =================================================
     // TIMERS
     // =================================================
@@ -146,6 +133,15 @@ private:
     bool scrResetInProgress;
 
     uint8_t scrResetStepsRemaining;
+    // =========================================================
+    // FANS
+    // =========================================================
+
+    bool circulationFanOn;
+
+    uint8_t coolingFanPower;
+
+    unsigned long lastCoolingFanUpdate;
 
     // =================================================
     // MENU
@@ -250,15 +246,22 @@ private:
     void updateSCRReset();
 
     void stopSCRMovement();
-
-
-    void finishDrying();
-
     void updateWeightControl();
 
     void captureStartingWeight();
 
     void checkTargetWeight();
+
+    void finishDrying();
+    // =========================================================
+    // FAN CONTROL
+    // =========================================================
+
+    void updateFanControl();
+
+    void setCirculationFan(bool on);
+
+    void setCoolingFanPower(uint8_t power);
 };
 
 #endif
