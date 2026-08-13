@@ -55,6 +55,7 @@ Application::Application()
       heaterEnabled(false),
       finishScreenShown(false),
       targetReached(false),
+      currentSoftwarePower(0),
       targetSoftwarePower(0),
 
       scrResetInProgress(false),
@@ -1416,18 +1417,19 @@ void Application::handleRunning(EncoderEvent event)
     // -------------------------------------------------
     // ENCODER CLICK = PAUSE
     // -------------------------------------------------
-
     if (event == ENCODER_CLICK)
     {
         Serial.println("[RUNNING] Pause requested");
 
         dryer.stop();
+
         heaterEnabled = false;
 
-        // Stop increasing/decreasing SCR target.
-        // Current physical SCR value is left unchanged
-        // while paused.
-        stopSCRMovement();
+        // Force heater power request to zero.
+        targetSoftwarePower = 0;
+
+        // Physically ramp SCR down to zero.
+        startSCRReset();
 
         state = STATE_PAUSED;
 
@@ -1581,27 +1583,56 @@ void Application::drawRunningScreen()
 // =====================================================
 // PAUSED
 // =====================================================
-
 void Application::handlePaused(
     EncoderEvent event
 )
 {
+    // =================================================
+    // RESUME
+    // =================================================
+
     if (event == ENCODER_CLICK)
     {
         Serial.println(
-            "Resuming dryer..."
+            "[PAUSED] Resume requested"
         );
 
+        // Wait until the SCR has physically returned to zero.
+        if (scrResetInProgress)
+        {
+            Serial.println(
+                "[PAUSED] Waiting for SCR reset..."
+            );
+
+            return;
+        }
+
+        // Restart dryer.
         dryer.start(
             settings.temperature
         );
 
         heaterEnabled = true;
 
+        // Start from zero SCR power.
+        targetSoftwarePower = 0;
+
+        // Re-enable temperature control from a clean state.
+        targetReached = false;
+        targetReachedStartTime = 0;
+
         state = STATE_RUNNING;
 
+        lastTemperatureControl = millis();
+
         drawRunningScreen();
+
+        return;
     }
+
+    // =================================================
+    // CANCEL
+    // =================================================
 
     else if (event == ENCODER_LONG_CLICK)
     {
@@ -1615,10 +1646,7 @@ void Application::handlePaused(
 
         targetSoftwarePower = 0;
 
-        /*
-         * Reset SCR physically.
-         */
-
+        // Reset SCR physically.
         startSCRReset();
 
         menuManager.openMain();
@@ -1628,7 +1656,6 @@ void Application::handlePaused(
         drawCurrentMenu();
     }
 }
-
 // =====================================================
 // PAUSED SCREEN
 // =====================================================
@@ -1653,21 +1680,12 @@ void Application::drawPausedScreen()
 // =====================================================
 // FINISHED
 // =====================================================
-
 void Application::handleFinished(
     EncoderEvent event
 )
 {
-    /*
-     * ALWAYS keep requesting zero.
-     */
-
+    // Always request SCR = 0%.
     targetSoftwarePower = 0;
-
-    /*
-     * SCR reset continues in the background
-     * through updateSCRControl().
-     */
 
     if (!finishScreenShown)
     {
@@ -1676,13 +1694,20 @@ void Application::handleFinished(
         finishScreenShown = true;
     }
 
-    /*
-     * Encoder remains immediately responsive.
-     */
-
     if (event == ENCODER_CLICK ||
         event == ENCODER_LONG_CLICK)
     {
+        // Do not leave the finished state until
+        // the physical SCR has reached zero.
+        if (scrResetInProgress)
+        {
+            Serial.println(
+                "[FINISHED] Waiting for SCR shutdown..."
+            );
+
+            return;
+        }
+
         menuManager.openMain();
 
         state = STATE_MENU;
@@ -1692,7 +1717,6 @@ void Application::handleFinished(
         drawCurrentMenu();
     }
 }
-
 // =====================================================
 // FINISHED SCREEN
 // =====================================================
@@ -1720,49 +1744,49 @@ void Application::drawFinishedScreen()
 // =====================================================
 // ERROR
 // =====================================================
-
 void Application::handleError(
     EncoderEvent event
 )
 {
-    // -------------------------------------------------
-    // Stop dryer immediately
-    // -------------------------------------------------
+    // =================================================
+    // FORCE DRYER OFF
+    // =================================================
 
     if (dryer.isRunning())
     {
         dryer.stop();
     }
 
-    // -------------------------------------------------
-    // Disable heater
-    // -------------------------------------------------
-
     heaterEnabled = false;
 
-    // -------------------------------------------------
-    // Request SCR = 0%
-    // -------------------------------------------------
+    // =================================================
+    // FORCE SCR TO ZERO
+    // =================================================
 
     targetSoftwarePower = 0;
 
-    // -------------------------------------------------
-    // Keep resetting SCR in background
-    // -------------------------------------------------
-
     if (!scrResetInProgress &&
-        scr.getPower() > 0)
+        currentSoftwarePower > 0)
     {
         startSCRReset();
     }
 
-    // -------------------------------------------------
-    // Return to menu
-    // -------------------------------------------------
+    // =================================================
+    // RETURN TO MENU
+    // =================================================
 
     if (event == ENCODER_CLICK ||
         event == ENCODER_LONG_CLICK)
     {
+        if (scrResetInProgress)
+        {
+            Serial.println(
+                "[ERROR] Waiting for SCR shutdown..."
+            );
+
+            return;
+        }
+
         menuManager.openMain();
 
         state = STATE_MENU;

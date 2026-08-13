@@ -1,21 +1,33 @@
 #ifndef TEMPERATURE_FILTER_H
 #define TEMPERATURE_FILTER_H
 
+#include <Arduino.h>
+#include <math.h>
+
 class TemperatureFilter
 {
 public:
+
     TemperatureFilter();
 
-    void begin(float initialValue = 0.0f);
+    void begin(
+        float initialValue = NAN
+    );
 
-    float update(float newValue);
+    float update(
+        float newValue
+    );
 
     float getValue() const;
 
-    void reset(float value = 0.0f);
+    void reset(
+        float value = NAN
+    );
 
 private:
+
     float filteredValue;
+
     bool initialized;
 
     // 0.0 = very smooth / slow

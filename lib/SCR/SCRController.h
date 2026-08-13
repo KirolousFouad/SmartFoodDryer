@@ -14,20 +14,48 @@ public:
 
     void begin();
 
-    // Increase SCR by exactly 1 physical step
+    // -----------------------------------------------------
+    // Physical SCR control
+    // -----------------------------------------------------
+
+    // Increase SCR by exactly one physical step.
     void increase();
 
-    // Decrease SCR by exactly 1 physical step
+    // Decrease SCR by exactly one physical step.
     void decrease();
 
-    // Set requested power
-    void setPower(uint8_t percent);
+    // -----------------------------------------------------
+    // Reset
+    // -----------------------------------------------------
 
-    // Force SCR back to 0%
+    // Send one physical decrease pulse and force
+    // the software state to 0%.
+    //
+    // Used by Application during the non-blocking
+    // startup/error/finish reset sequence.
+    void resetStep();
+
+    // Legacy blocking reset.
+    // Keep available for compatibility, but Application
+    // should use resetStep() instead.
     void resetToZero();
 
-    // Current software-tracked SCR percentage
+    // -----------------------------------------------------
+    // Power
+    // -----------------------------------------------------
+
+    // Set requested power.
+    //
+    // This is a blocking helper and should NOT be used
+    // by the main Application control loop.
+    void setPower(uint8_t percent);
+
+    // Current software-tracked SCR position.
     uint8_t getPower() const;
+
+    // Move exactly one physical step toward target.
+    //
+    // Returns true when target has been reached.
     bool moveOneStepToward(uint8_t targetPower);
 
 private:

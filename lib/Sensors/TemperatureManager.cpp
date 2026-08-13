@@ -36,6 +36,17 @@ TemperatureManager::TemperatureManager(
 void TemperatureManager::begin()
 {
     // =====================================================
+    // FILTER INITIALIZATION
+    // =====================================================
+
+    sensor1Filter.begin();
+    sensor2Filter.begin();
+    sensor3Filter.begin();
+
+    averageFilter.begin();
+    hotFilter.begin();
+
+    // =====================================================
     // DS18B20
     // =====================================================
 
