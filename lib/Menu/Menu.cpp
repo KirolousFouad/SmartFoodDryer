@@ -1,57 +1,96 @@
-/*
--------------------------------------------------------
-Smart Food Dryer Firmware
-Version : 2.1.0
-Module  : Menu
--------------------------------------------------------
-*/
-
 #include "Menu.h"
 
 Menu::Menu()
 {
-    title = "";
-
-    count = 0;
+    menuTitle = "";
+    itemCount = 0;
+    selectedIndex = 0;
 }
 
-void Menu::setTitle(const char* text)
+void Menu::setTitle(const char* title)
 {
-    title = text;
+    menuTitle = title;
 }
 
-const char* Menu::getTitle() const
+bool Menu::addItem(
+    const char* text,
+    MenuAction action,
+    uint8_t parameter)
 {
-    return title;
-}
-
-bool Menu::addItem(const char* text,
-                   Action action,
-                   MenuID next,
-                   uint8_t value)
-{
-    if(count >= MAX_ITEMS)
+    if (itemCount >= MAX_MENU_ITEMS)
         return false;
 
-    items[count].text = text;
+    items[itemCount].text = text;
+    items[itemCount].action = action;
+    items[itemCount].parameter = parameter;
 
-    items[count].action = action;
-
-    items[count].nextMenu = next;
-
-    items[count].value = value;
-
-    count++;
+    itemCount++;
 
     return true;
 }
 
-uint8_t Menu::size() const
+void Menu::next()
 {
-    return count;
+    if (itemCount == 0)
+        return;
+
+    selectedIndex++;
+
+    if (selectedIndex >= itemCount)
+        selectedIndex = 0;
 }
 
-const MenuItem& Menu::get(uint8_t index) const
+void Menu::previous()
 {
-    return items[index];
+    if (itemCount == 0)
+        return;
+
+    if (selectedIndex == 0)
+        selectedIndex = itemCount - 1;
+    else
+        selectedIndex--;
+}
+
+void Menu::resetSelection()
+{
+    selectedIndex = 0;
+}
+
+uint8_t Menu::getSelectedIndex() const
+{
+    return selectedIndex;
+}
+
+const char* Menu::getTitle() const
+{
+    return menuTitle;
+}
+
+const char* Menu::getItem(uint8_t index) const
+{
+    if (index >= itemCount)
+        return "";
+
+    return items[index].text;
+}
+
+MenuAction Menu::getSelectedAction() const
+{
+    if (itemCount == 0 || selectedIndex >= itemCount)
+        return ACTION_NONE;
+
+    return items[selectedIndex].action;
+}
+
+uint8_t Menu::getSelectedParameter() const
+{
+    if (itemCount == 0 || selectedIndex >= itemCount)
+        return 0;
+
+    return items[selectedIndex].parameter;
+}
+
+uint8_t Menu::getItemCount() const
+{
+    return itemCount;
 }

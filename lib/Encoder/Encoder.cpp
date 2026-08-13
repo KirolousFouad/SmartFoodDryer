@@ -1,50 +1,85 @@
 #include "Encoder.h"
-#include "Config.h"
 
-Encoder encoder;
+Encoder::Encoder(
+    uint8_t clk,
+    uint8_t dt,
+    uint8_t sw
+)
+{
+    clkPin = clk;
+    dtPin = dt;
+    swPin = sw;
+
+    event = ENCODER_NONE;
+}
 
 void Encoder::begin()
 {
-    pinMode(ENCODER_CLK,INPUT);
-    pinMode(ENCODER_DT,INPUT);
-    pinMode(ENCODER_SW,INPUT_PULLUP);
+    pinMode(clkPin, INPUT_PULLUP);
+    pinMode(dtPin, INPUT_PULLUP);
+    pinMode(swPin, INPUT_PULLUP);
 
-    lastCLK = digitalRead(ENCODER_CLK);
+    lastCLK = digitalRead(clkPin);
+    lastButton = digitalRead(swPin);
 
-    pressedLast = false;
+    pressTime = 0;
 }
 
-int Encoder::getRotation()
+void Encoder::update()
 {
-    int currentCLK = digitalRead(ENCODER_CLK);
+    event = ENCODER_NONE;
 
-    if(currentCLK != lastCLK && currentCLK == HIGH)
+    // =================================================
+    // ROTARY ENCODER
+    // =================================================
+
+    bool currentCLK = digitalRead(clkPin);
+
+    if (lastCLK == HIGH && currentCLK == LOW)
     {
-        lastCLK = currentCLK;
-
-        if(digitalRead(ENCODER_DT) != currentCLK)
-            return 1;
+        if (digitalRead(dtPin) == HIGH)
+        {
+            event = ENCODER_RIGHT;
+        }
         else
-            return -1;
+        {
+            event = ENCODER_LEFT;
+        }
     }
 
     lastCLK = currentCLK;
 
-    return 0;
-}
+    // =================================================
+    // BUTTON
+    // =================================================
 
-bool Encoder::isPressed()
-{
-    bool current = !digitalRead(ENCODER_SW);
+    bool currentButton = digitalRead(swPin);
 
-    if(current && !pressedLast)
+    if (!currentButton && lastButton)
     {
-        pressedLast = true;
-        return true;
+        pressTime = millis();
     }
 
-    if(!current)
-        pressedLast = false;
+    if (currentButton && !lastButton)
+    {
+        if (millis() - pressTime > 1000)
+        {
+            event = ENCODER_LONG_CLICK;
+        }
+        else
+        {
+            event = ENCODER_CLICK;
+        }
+    }
 
-    return false;
+    lastButton = currentButton;
+}
+
+EncoderEvent Encoder::getEvent()
+{
+    EncoderEvent currentEvent = event;
+
+    event = ENCODER_NONE;
+
+    return currentEvent;
 }

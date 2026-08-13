@@ -1,39 +1,2251 @@
-#include <Arduino.h>
 #include "Application.h"
 
+#include <Arduino.h>
+#include <math.h>
+
+// =====================================================
+// CONSTRUCTOR
+// =====================================================
+
 Application::Application()
+    : display(),
+
+      encoder(
+          ENCODER_CLK,
+          ENCODER_DT,
+          ENCODER_SW),
+
+      menuManager(),
+
+      dryer(
+          CIRCULATION_FAN_PIN,
+          COOLING_FAN_PWM_PIN),
+
+      scr(
+          SCR_INCREASE_PIN,
+          SCR_DECREASE_PIN),
+
+      temperatureManager(
+          DS18B20_PIN,
+          MAX6675_SCK,
+          MAX6675_CS,
+          MAX6675_SO),
+
+      settings(),
+
+      state(STATE_MENU),
+      weightSensor(
+          HX711_DOUT,
+          HX711_SCK),
+
+      currentWeight(0.0f),
+      targetWeight(0.0f),
+      weightTargetStartTime(0),
+      weightTargetReached(false),
+      startingWeight(0.0f),
+      finalWeight(0.0f),
+      startingWeightCaptured(false),
+      startingWeightStableStart(0),
+      targetWeightDetected(false),
+      targetWeightStartTime(0),
+
+      lastHeartbeat(0),
+      dryingStartTime(0),
+      lastDryerUpdate(0),
+      lastDisplayUpdate(0),
+      lastTemperatureControl(0),
+      targetReachedStartTime(0),
+      lastSCRPulse(0),
+
+      heaterEnabled(false),
+      finishScreenShown(false),
+      targetReached(false),
+
+      currentSoftwarePower(0),
+      targetSoftwarePower(0),
+
+      scrResetInProgress(false),
+      scrResetStepsRemaining(0)
 {
-    lastHeartbeat = 0;
+    settings.temperature = 60;
+    settings.targetWeight = 1000;
+    settings.autoMode = false;
+    settings.recipeID = 0;
 }
+
+// =====================================================
+// BEGIN
+// =====================================================
 
 void Application::begin()
 {
     Serial.begin(115200);
-    display.begin();
-    display.center(0, "Smart Dryer");
-    display.center(1, "Firmware v0.2");
-    delay(3000);
-    display.clear();
-    display.center(0,"System");
-    display.center(1,"Ready");
-    while (!Serial)
-    {
-        // Wait for Serial on supported boards
-    }
+
+    delay(500);
 
     Serial.println();
-    Serial.println("==================================");
-    Serial.println(" Smart Food Dryer Firmware");
-    Serial.println(" Version 0.2.0");
-    Serial.println("==================================");
+    Serial.println("==============================");
+    Serial.println(" SMART FOOD DRYER");
+    Serial.println(" Firmware Version 0.2.0");
+    Serial.println("==============================");
+
+    // =================================================
+    // DISPLAY
+    // =================================================
+
+    Serial.println("[INIT] Display...");
+
+    display.begin();
+
+    display.clear();
+
+    display.center(
+        0,
+        "Smart Dryer"
+    );
+
+    display.center(
+        1,
+        "Starting..."
+    );
+
+    delay(1000);
+
+    Serial.println("[INIT] Display OK");
+
+    // =================================================
+    // ENCODER
+    // =================================================
+
+    Serial.println("[INIT] Encoder...");
+
+    encoder.begin();
+
+    Serial.println("[INIT] Encoder OK");
+
+    // =================================================
+    // MENU
+    // =================================================
+
+    Serial.println("[INIT] Menu Manager...");
+
+    menuManager.begin();
+
+    Serial.println("[INIT] Menu Manager OK");
+
+    // =================================================
+    // DRYER
+    // =================================================
+
+    Serial.println("[INIT] Dryer...");
+
+    dryer.begin();
+
+    Serial.println("[INIT] Dryer OK");
+
+    // =================================================
+    // TEMPERATURE
+    // =================================================
+
+    Serial.println("[INIT] Temperature Manager...");
+
+    temperatureManager.begin();
+
+    Serial.println("[INIT] Temperature Manager OK");
+
+    // =================================================
+    // SCR
+    // =================================================
+
+    Serial.println("[INIT] SCR...");
+
+    scr.begin();
+
+    Serial.println("[INIT] SCR OK");
+
+    // =================================================
+    // HX711
+    // =================================================
+
+    Serial.println("[INIT] Weight Sensor...");
+
+    weightSensor.begin();
+
+    Serial.println("[INIT] Weight Sensor OK");
+    // =================================================
+    // INITIAL SCR RESET
+    // =================================================
+
+    Serial.println();
+    Serial.println("[INIT] Resetting SCR to 0%...");
+
+    /*
+     * The physical SCR behaves like a push button.
+     *
+     * We don't know its physical value after power-up.
+     * Therefore we send 100 decrease pulses.
+     *
+     * This is done directly at startup.
+     */
+    scr.resetToZero();
+
+    currentSoftwarePower = 0;
+    targetSoftwarePower = 0;
+
+    scrResetInProgress = false;
+    scrResetStepsRemaining = 0;
+
+    Serial.println("[INIT] SCR reset complete.");
+
+    // =================================================
+    // INITIAL STATE
+    // =================================================
+
+    state = STATE_MENU;
+
+    lastHeartbeat = millis();
+
+    dryingStartTime = 0;
+
+    lastDryerUpdate = millis();
+
+    lastDisplayUpdate = millis();
+
+    lastTemperatureControl = millis();
+
+    targetReachedStartTime = 0;
+
+    lastSCRPulse = millis();
+
+    heaterEnabled = false;
+
+    finishScreenShown = false;
+
+    targetReached = false;
+
+    menuManager.openMain();
+
+    display.clear();
+
+    drawCurrentMenu();
+
+    Serial.println();
+    Serial.println("==============================");
+    Serial.println(" SYSTEM READY");
+    Serial.println("==============================");
 }
+
+// =====================================================
+// UPDATE
+// =====================================================
 
 void Application::update()
 {
-    if (millis() - lastHeartbeat >= 1000)
-    {
-        lastHeartbeat = millis();
+    // =================================================
+    // ENCODER
+    // =================================================
 
-        Serial.println("Application Running...");
+    encoder.update();
+
+    EncoderEvent event =
+        encoder.getEvent();
+    // =================================================
+    // WEIGHT SENSOR
+    // =================================================
+
+    weightSensor.update();
+
+    // =================================================
+    // TEMPERATURE
+    // =================================================
+
+    static unsigned long lastTemperatureUpdate = 0;
+
+    if (millis() - lastTemperatureUpdate >= 1000)
+    {
+        lastTemperatureUpdate = millis();
+
+        temperatureManager.update();
+
+        // TEMP DEBUG
+        Serial.print("[TEMP DEBUG] AVG = ");
+        Serial.print(temperatureManager.getAverageTemperature());
+
+        Serial.print(" C | HOT = ");
+        Serial.print(temperatureManager.getHotTemperature());
+
+        Serial.println(" C");
+
+        // Keep temperature control
+        if (state == STATE_RUNNING)
+        {
+            updateTemperatureControl();
+        }
     }
+
+    // =================================================
+    // DRYER
+    // =================================================
+
+    if (millis() - lastDryerUpdate >= 50)
+    {
+        dryer.update();
+
+        lastDryerUpdate = millis();
+    }
+
+    // =================================================
+    // SCR
+    //
+    // IMPORTANT:
+    // SCR control is NOT limited to STATE_RUNNING.
+    //
+    // This allows the SCR to return to zero after:
+    // - Finish
+    // - Error
+    // - Pause cancellation
+    // =================================================
+
+    updateSCRControl();
+
+    // =================================================
+    // APPLICATION STATE
+    // =================================================
+
+    switch (state)
+    {
+        case STATE_MENU:
+
+            handleMenu(event);
+
+            break;
+
+        case STATE_MANUAL_TEMP:
+
+            handleManualTemperature(event);
+
+            break;
+
+        case STATE_MANUAL_WEIGHT:
+
+            handleManualWeight(event);
+
+            break;
+
+        case STATE_READY:
+
+            handleReady(event);
+
+            break;
+
+        case STATE_RUNNING:
+
+            handleRunning(event);
+
+            updateWeightControl();
+
+            break;
+
+        case STATE_PAUSED:
+
+            handlePaused(event);
+
+            break;
+
+        case STATE_FINISHED:
+
+            handleFinished(event);
+
+            break;
+
+        case STATE_ERROR:
+
+            handleError(event);
+
+            break;
+    }
+
+    // =================================================
+    // HEARTBEAT
+    // =================================================
+
+    if (millis() - lastHeartbeat >= 5000)
+    {
+        Serial.println(
+            "[Application] System alive"
+        );
+
+        lastHeartbeat = millis();
+    }
+}
+
+// =====================================================
+// TEMPERATURE CONTROL
+// =====================================================
+
+void Application::updateTemperatureControl()
+{
+    if (!dryer.isRunning())
+    {
+        return;
+    }
+
+    float chamberTemperature =
+        temperatureManager.getAverageTemperature();
+
+    float safetyTemperature =
+        temperatureManager.getHotTemperature();
+
+    // =================================================
+    // SAFETY
+    // =================================================
+
+    if (!isnan(safetyTemperature) &&
+        safetyTemperature >= MAX_SAFE_TEMP)
+    {
+        Serial.println();
+        Serial.println("==============================");
+        Serial.println(" !!! SAFETY SHUTDOWN !!!");
+        Serial.println("==============================");
+
+        Serial.print("Temperature: ");
+        Serial.print(safetyTemperature);
+        Serial.println(" C");
+
+        dryer.stop();
+
+        heaterEnabled = false;
+
+        targetReached = false;
+
+        targetReachedStartTime = 0;
+
+        targetSoftwarePower = 0;
+
+        startSCRReset();
+
+        state = STATE_ERROR;
+
+        drawErrorScreen();
+
+        return;
+    }
+
+    // =================================================
+    // INVALID TEMPERATURE
+    // =================================================
+
+    if (isnan(chamberTemperature))
+    {
+        Serial.println(
+            "[CONTROL] Invalid chamber temperature"
+        );
+
+        return;
+    }
+
+    float targetTemperature =
+        settings.temperature;
+
+    // =================================================
+    // TARGET REACHED
+    // =================================================
+
+    if (chamberTemperature >= targetTemperature)
+    {
+        if (!targetReached)
+        {
+            targetReached = true;
+
+            targetReachedStartTime =
+                millis();
+
+            Serial.println();
+            Serial.println(
+                "[CONTROL] Target temperature reached"
+            );
+
+            Serial.print(
+                "[CONTROL] Chamber: "
+            );
+
+            Serial.print(
+                chamberTemperature
+            );
+
+            Serial.println(" C");
+
+            Serial.println(
+                "[CONTROL] Starting 20 second hold"
+            );
+        }
+
+        /*
+         * Heater power becomes zero.
+         *
+         * The SCR will move down one physical pulse
+         * at a time.
+         */
+        targetSoftwarePower = 0;
+
+        return;
+    }
+
+    // =================================================
+    // BELOW TARGET
+    // =================================================
+
+    if (targetReached)
+    {
+        targetReached = false;
+
+        targetReachedStartTime = 0;
+
+        Serial.println(
+            "[CONTROL] Temperature dropped below target"
+        );
+    }
+
+    float difference =
+        targetTemperature -
+        chamberTemperature;
+
+    uint8_t desiredPower =
+        calculateHeaterPower(
+            chamberTemperature,
+            targetTemperature
+        );
+
+    targetSoftwarePower =
+        desiredPower;
+
+    Serial.print("[CONTROL] AVG: ");
+    Serial.print(chamberTemperature);
+
+    Serial.print(" C | Target: ");
+    Serial.print(targetTemperature);
+
+    Serial.print(" C | Difference: ");
+    Serial.print(difference);
+
+    Serial.print(" C | SCR Target: ");
+    Serial.print(targetSoftwarePower);
+
+    Serial.println("%");
+}
+
+// =====================================================
+// HEATER POWER CALCULATION
+// =====================================================
+
+uint8_t Application::calculateHeaterPower(
+    float currentTemperature,
+    float targetTemperature
+)
+{
+    float difference =
+        targetTemperature -
+        currentTemperature;
+
+    if (difference <= 0.0f)
+    {
+        return 0;
+    }
+
+    if (difference >= 10.0f)
+    {
+        return 100;
+    }
+
+    if (difference >= 5.0f)
+    {
+        return 70;
+    }
+
+    if (difference >= 2.0f)
+    {
+        return 40;
+    }
+
+    return 20;
+}
+
+// =====================================================
+// SCR CONTROL
+// =====================================================
+
+void Application::updateSCRControl()
+{
+    // =================================================
+    // RESET HAS PRIORITY
+    // =================================================
+
+    if (scrResetInProgress)
+    {
+        updateSCRReset();
+
+        return;
+    }
+
+    // =================================================
+    // ALREADY AT TARGET
+    // =================================================
+
+    if (currentSoftwarePower ==
+        targetSoftwarePower)
+    {
+        return;
+    }
+
+    // =================================================
+    // ONE PHYSICAL PULSE AT A TIME
+    // =================================================
+
+    /*
+     * Never send another pulse until the previous
+     * physical button action has completed.
+     */
+
+    if (millis() - lastSCRPulse < 300)
+    {
+        return;
+    }
+
+    lastSCRPulse = millis();
+
+    // =================================================
+    // INCREASE
+    // =================================================
+
+    if (currentSoftwarePower <
+        targetSoftwarePower)
+    {
+        increaseSCRPulse();
+    }
+
+    // =================================================
+    // DECREASE
+    // =================================================
+
+    else
+    {
+        decreaseSCRPulse();
+    }
+}
+
+// =====================================================
+// INCREASE SCR ONE PHYSICAL STEP
+// =====================================================
+
+void Application::increaseSCRPulse()
+{
+    if (currentSoftwarePower >= 100)
+    {
+        currentSoftwarePower = 100;
+
+        return;
+    }
+
+    /*
+     * SCRController::increase()
+     *
+     * = ONE physical button press
+     *
+     * = ONE SCR %
+     */
+
+    scr.increase();
+
+    currentSoftwarePower++;
+
+    Serial.print(
+        "[SCR] Physical pulse +1 -> "
+    );
+
+    Serial.print(
+        currentSoftwarePower
+    );
+
+    Serial.println("%");
+}
+
+// =====================================================
+// DECREASE SCR ONE PHYSICAL STEP
+// =====================================================
+
+void Application::decreaseSCRPulse()
+{
+    if (currentSoftwarePower == 0)
+    {
+        return;
+    }
+
+    /*
+     * SCRController::decrease()
+     *
+     * = ONE physical button press
+     *
+     * = ONE SCR %
+     */
+
+    scr.decrease();
+
+    currentSoftwarePower--;
+
+    Serial.print(
+        "[SCR] Physical pulse -1 -> "
+    );
+
+    Serial.print(
+        currentSoftwarePower
+    );
+
+    Serial.println("%");
+}
+
+// =====================================================
+// START SCR RESET
+// =====================================================
+
+void Application::startSCRReset()
+{
+    if (scrResetInProgress)
+    {
+        return;
+    }
+
+    Serial.println(
+        "[SCR] Starting non-blocking reset to 0%"
+    );
+
+    /*
+     * We don't know the actual physical SCR value.
+     *
+     * Send enough decrease pulses to guarantee zero.
+     *
+     * One pulse every update cycle.
+     */
+    scrResetInProgress = true;
+
+    scrResetStepsRemaining = 100;
+
+    targetSoftwarePower = 0;
+
+    lastSCRPulse = millis();
+}
+
+// =====================================================
+// UPDATE SCR RESET
+// =====================================================
+
+void Application::updateSCRReset()
+{
+    if (!scrResetInProgress)
+    {
+        return;
+    }
+
+    /*
+     * Wait between physical button presses.
+     *
+     * This keeps:
+     * - encoder responsive
+     * - LCD responsive
+     * - temperature readings running
+     */
+
+    if (millis() - lastSCRPulse < 300)
+    {
+        return;
+    }
+
+    lastSCRPulse = millis();
+
+    if (scrResetStepsRemaining > 0)
+    {
+        scr.decrease();
+
+        scrResetStepsRemaining--;
+
+        currentSoftwarePower = 0;
+
+        Serial.print(
+            "[SCR RESET] Pulse sent | Remaining: "
+        );
+
+        Serial.println(
+            scrResetStepsRemaining
+        );
+    }
+
+    if (scrResetStepsRemaining == 0)
+    {
+        scrResetInProgress = false;
+
+        currentSoftwarePower = 0;
+
+        targetSoftwarePower = 0;
+
+        Serial.println(
+            "[SCR RESET] Physical SCR = 0%"
+        );
+    }
+}
+
+// =====================================================
+// STOP SCR MOVEMENT
+// =====================================================
+
+void Application::stopSCRMovement()
+{
+    targetSoftwarePower =
+        currentSoftwarePower;
+}
+// =====================================================
+// TARGET TEMPERATURE HOLD
+// =====================================================
+
+void Application::checkTargetTemperatureHold()
+{
+    /*
+     * Temperature is used for heater control only.
+     *
+     * Drying completion is determined by
+     * the target weight.
+     *
+     * Therefore this function must NOT transition
+     * the application to STATE_FINISHED.
+     */
+
+    if (!targetReached)
+    {
+        return;
+    }
+
+    /*
+     * Keep heater power at zero while the chamber
+     * temperature is at or above the target.
+     */
+
+    targetSoftwarePower = 0;
+}
+
+// =====================================================
+// MENU
+// =====================================================
+
+void Application::handleMenu(
+    EncoderEvent event
+)
+{
+    Menu* menu =
+        menuManager.currentMenu();
+
+    if (menu == nullptr)
+    {
+        return;
+    }
+
+    if (event == ENCODER_RIGHT)
+    {
+        menu->next();
+
+        drawCurrentMenu();
+    }
+
+    else if (event == ENCODER_LEFT)
+    {
+        menu->previous();
+
+        drawCurrentMenu();
+    }
+
+    else if (event == ENCODER_CLICK)
+    {
+        MenuAction action =
+            menu->getSelectedAction();
+
+        uint8_t parameter =
+            menu->getSelectedParameter();
+
+        handleMenuAction(
+            action,
+            parameter
+        );
+    }
+}
+
+// =====================================================
+// MENU ACTIONS
+// =====================================================
+
+void Application::handleMenuAction(
+    MenuAction action,
+    uint8_t parameter
+)
+{
+    switch (action)
+    {
+        case ACTION_OPEN_RECIPES:
+        {
+            settings.autoMode = true;
+
+            menuManager.openRecipes();
+
+            state = STATE_MENU;
+
+            drawCurrentMenu();
+
+            break;
+        }
+
+        case ACTION_OPEN_MANUAL:
+        {
+            settings.autoMode = false;
+
+            settings.temperature = 60;
+
+            settings.targetWeight = 1000;
+
+            state = STATE_MANUAL_TEMP;
+
+            drawManualTemperature();
+
+            break;
+        }
+
+        case ACTION_START_RECIPE:
+        {
+            settings.recipeID =
+                parameter;
+
+            const Recipe& recipe =
+                RecipeDatabase::getRecipe(
+                    settings.recipeID
+                );
+
+            settings.temperature =
+                recipe.temperature;
+
+            settings.targetWeight =
+                recipe.targetWeight;
+
+            settings.autoMode = true;
+
+            Serial.println();
+            Serial.println("==============================");
+            Serial.println(" RECIPE SELECTED");
+            Serial.println("==============================");
+
+            Serial.print("Recipe: ");
+            Serial.println(recipe.name);
+
+            Serial.print("Temperature: ");
+            Serial.print(recipe.temperature);
+            Serial.println(" C");
+
+            Serial.print("Target weight: ");
+            Serial.print(recipe.targetWeight);
+            Serial.println(" g");
+
+            state = STATE_READY;
+
+            drawReadyScreen();
+
+            break;
+        }
+
+        case ACTION_CONFIRM_RECIPE:
+        {
+            state = STATE_READY;
+
+            drawReadyScreen();
+
+            break;
+        }
+
+        case ACTION_CANCEL_RECIPE:
+        {
+            menuManager.openRecipes();
+
+            state = STATE_MENU;
+
+            drawCurrentMenu();
+
+            break;
+        }
+
+        case ACTION_NONE:
+        default:
+        {
+            break;
+        }
+    }
+}
+
+// =====================================================
+// DRAW CURRENT MENU
+// =====================================================
+
+void Application::drawCurrentMenu()
+{
+    Menu* menu =
+        menuManager.currentMenu();
+
+    if (menu == nullptr)
+    {
+        return;
+    }
+
+    display.drawMenu(
+        menu->getTitle(),
+        menu->getItem(
+            menu->getSelectedIndex()
+        )
+    );
+}
+
+// =====================================================
+// MANUAL TEMPERATURE
+// =====================================================
+
+void Application::handleManualTemperature(
+    EncoderEvent event
+)
+{
+    if (event == ENCODER_RIGHT)
+    {
+        if (settings.temperature < 120)
+        {
+            settings.temperature++;
+        }
+
+        drawManualTemperature();
+    }
+
+    else if (event == ENCODER_LEFT)
+    {
+        if (settings.temperature > 0)
+        {
+            settings.temperature--;
+        }
+
+        drawManualTemperature();
+    }
+
+    else if (event == ENCODER_CLICK)
+    {
+        state = STATE_MANUAL_WEIGHT;
+
+        drawManualWeight();
+    }
+
+    else if (event == ENCODER_LONG_CLICK)
+    {
+        menuManager.openMain();
+
+        state = STATE_MENU;
+
+        drawCurrentMenu();
+    }
+}
+
+// =====================================================
+// MANUAL TEMPERATURE SCREEN
+// =====================================================
+
+void Application::drawManualTemperature()
+{
+    char line[17];
+
+    display.clear();
+
+    display.print(
+        0,
+        0,
+        "Set Temperature"
+    );
+
+    snprintf(
+        line,
+        sizeof(line),
+        "%3u C  < >",
+        settings.temperature
+    );
+
+    display.print(
+        0,
+        1,
+        line
+    );
+}
+
+// =====================================================
+// MANUAL WEIGHT
+// =====================================================
+
+void Application::handleManualWeight(
+    EncoderEvent event
+)
+{
+    if (event == ENCODER_RIGHT)
+    {
+        if (settings.targetWeight < 10000)
+        {
+            settings.targetWeight += 100;
+        }
+
+        drawManualWeight();
+    }
+
+    else if (event == ENCODER_LEFT)
+    {
+        if (settings.targetWeight > 100)
+        {
+            settings.targetWeight -= 100;
+        }
+
+        drawManualWeight();
+    }
+
+    else if (event == ENCODER_CLICK)
+    {
+        state = STATE_READY;
+
+        drawReadyScreen();
+    }
+
+    else if (event == ENCODER_LONG_CLICK)
+    {
+        state = STATE_MANUAL_TEMP;
+
+        drawManualTemperature();
+    }
+}
+
+// =====================================================
+// MANUAL WEIGHT SCREEN
+// =====================================================
+
+void Application::drawManualWeight()
+{
+    char line[17];
+
+    display.clear();
+
+    display.print(
+        0,
+        0,
+        "Target Weight"
+    );
+
+    snprintf(
+        line,
+        sizeof(line),
+        "%4u g  < >",
+        settings.targetWeight
+    );
+
+    display.print(
+        0,
+        1,
+        line
+    );
+}
+
+// =====================================================
+// READY
+// =====================================================
+
+void Application::handleReady(
+    EncoderEvent event
+)
+{
+    if (event == ENCODER_CLICK)
+    {
+        // =================================================
+        // SAFETY CHECKS
+        // =================================================
+
+        if (scrResetInProgress)
+        {
+            Serial.println(
+                "[READY] Waiting for SCR reset..."
+            );
+
+            return;
+        }
+
+        if (!weightSensor.isReady())
+        {
+            Serial.println(
+                "[READY] ERROR: Weight sensor not ready"
+            );
+
+            state = STATE_ERROR;
+            drawErrorScreen();
+
+            return;
+        }
+
+        if (weightSensor.isTaring())
+        {
+            Serial.println(
+                "[READY] Waiting for weight sensor tare..."
+            );
+
+            return;
+        }
+
+        // =================================================
+        // CAPTURE TARGET WEIGHT
+        // =================================================
+
+        targetWeight =
+            settings.targetWeight;
+
+        if (targetWeight <= 0.0f)
+        {
+            Serial.println(
+                "[READY] ERROR: Invalid target weight"
+            );
+
+            state = STATE_ERROR;
+            drawErrorScreen();
+
+            return;
+        }
+
+        // =================================================
+        // CAPTURE STARTING WEIGHT
+        // =================================================
+
+        captureStartingWeight();
+
+        // -------------------------------------------------
+        // Verify starting weight
+        // -------------------------------------------------
+
+        if (startingWeight <= 0.0f)
+        {
+            Serial.println(
+                "[READY] ERROR: Invalid starting weight"
+            );
+
+            state = STATE_ERROR;
+            drawErrorScreen();
+
+            return;
+        }
+
+        // =================================================
+        // TARGET MUST BE LOWER THAN STARTING WEIGHT
+        // =================================================
+
+        if (targetWeight >= startingWeight)
+        {
+            Serial.println();
+            Serial.println(
+                "[READY] ERROR: Target weight must be"
+            );
+            Serial.println(
+                "[READY] lower than starting weight"
+            );
+
+            Serial.print(
+                "[READY] Starting: "
+            );
+
+            Serial.print(
+                startingWeight,
+                2
+            );
+
+            Serial.println(" g");
+
+            Serial.print(
+                "[READY] Target: "
+            );
+
+            Serial.print(
+                targetWeight,
+                2
+            );
+
+            Serial.println(" g");
+
+            state = STATE_ERROR;
+            drawErrorScreen();
+
+            return;
+        }
+
+        // =================================================
+        // STARTING INFORMATION
+        // =================================================
+
+        Serial.println();
+        Serial.println(
+            "=============================="
+        );
+
+        Serial.println(
+            " STARTING DRYING"
+        );
+
+        Serial.println(
+            "=============================="
+        );
+
+        Serial.print(
+            "Temperature: "
+        );
+
+        Serial.print(
+            settings.temperature
+        );
+
+        Serial.println(" C");
+
+        Serial.print(
+            "Starting weight: "
+        );
+
+        Serial.print(
+            startingWeight,
+            2
+        );
+
+        Serial.println(" g");
+
+        Serial.print(
+            "Target weight: "
+        );
+
+        Serial.print(
+            targetWeight,
+            2
+        );
+
+        Serial.println(" g");
+
+        // =================================================
+        // RECIPE / MODE
+        // =================================================
+
+        if (settings.autoMode)
+        {
+            const Recipe& recipe =
+                RecipeDatabase::getRecipe(
+                    settings.recipeID
+                );
+
+            Serial.print(
+                "Recipe: "
+            );
+
+            Serial.println(
+                recipe.name
+            );
+        }
+        else
+        {
+            Serial.println(
+                "Mode: MANUAL"
+            );
+        }
+
+        // =================================================
+        // START DRYER
+        // =================================================
+
+        dryer.start(
+            settings.temperature
+        );
+
+        heaterEnabled = true;
+
+        // =================================================
+        // RESET SOFTWARE CONTROL
+        // =================================================
+
+        currentSoftwarePower = 0;
+
+        targetSoftwarePower = 0;
+
+        targetReached = false;
+
+        targetReachedStartTime = 0;
+
+        weightTargetStartTime = 0;
+
+        weightTargetReached = false;
+
+        dryingStartTime =
+            millis();
+
+        finishScreenShown = false;
+
+        lastDisplayUpdate =
+            millis();
+
+        // =================================================
+        // ENTER RUNNING STATE
+        // =================================================
+
+        state =
+            STATE_RUNNING;
+
+        drawRunningScreen();
+    }
+
+    else if (event == ENCODER_LONG_CLICK)
+    {
+        menuManager.openMain();
+
+        state = STATE_MENU;
+
+        drawCurrentMenu();
+    }
+}
+// =====================================================
+// READY SCREEN
+// =====================================================
+
+void Application::drawReadyScreen()
+{
+    char line[17];
+
+    display.clear();
+
+    if (settings.autoMode)
+    {
+        const Recipe& recipe =
+            RecipeDatabase::getRecipe(
+                settings.recipeID
+            );
+
+        display.print(
+            0,
+            0,
+            recipe.name
+        );
+    }
+    else
+    {
+        display.print(
+            0,
+            0,
+            "Manual Ready"
+        );
+    }
+
+    snprintf(
+        line,
+        sizeof(line),
+        "%uC Click=Start",
+        settings.temperature
+    );
+
+    display.print(
+        0,
+        1,
+        line
+    );
+}
+// =====================================================
+// RUNNING
+// =====================================================
+
+void Application::handleRunning(EncoderEvent event)
+{
+    // -------------------------------------------------
+    // ENCODER CLICK = PAUSE
+    // -------------------------------------------------
+
+    if (event == ENCODER_CLICK)
+    {
+        Serial.println("[RUNNING] Pause requested");
+
+        dryer.stop();
+        heaterEnabled = false;
+
+        // Stop increasing/decreasing SCR target.
+        // Current physical SCR value is left unchanged
+        // while paused.
+        stopSCRMovement();
+
+        state = STATE_PAUSED;
+
+        drawPausedScreen();
+
+        return;
+    }
+
+    // -------------------------------------------------
+    // LONG CLICK = FINISH
+    // -------------------------------------------------
+
+    if (event == ENCODER_LONG_CLICK)
+    {
+        Serial.println("[RUNNING] Finish requested");
+
+        dryer.stop();
+        heaterEnabled = false;
+
+        // Immediately request SCR = 0%.
+        targetSoftwarePower = 0;
+
+        state = STATE_FINISHED;
+        finishScreenShown = false;
+
+        drawFinishedScreen();
+
+        return;
+    }
+
+    // -------------------------------------------------
+    // TEMPERATURE HOLD
+    // -------------------------------------------------
+
+    checkTargetTemperatureHold();
+
+    if (state != STATE_RUNNING)
+    {
+        return;
+    }
+
+    // -------------------------------------------------
+    // LCD UPDATE
+    // -------------------------------------------------
+
+    if (millis() - lastDisplayUpdate >= 500)
+    {
+        drawRunningScreen();
+
+        lastDisplayUpdate = millis();
+    }
+}
+void Application::drawRunningScreen()
+{
+    float average =
+        temperatureManager.getAverageTemperature();
+
+    char line1[17];
+    char line2[17];
+
+    // =================================================
+    // LINE 1
+    // =================================================
+
+    if (isnan(average))
+    {
+        snprintf(
+            line1,
+            sizeof(line1),
+            "AVG: --.-C T:%3uC",
+            settings.temperature
+        );
+    }
+    else
+    {
+        char avgText[8];
+
+        dtostrf(
+            average,
+            4,
+            1,
+            avgText
+        );
+
+        snprintf(
+            line1,
+            sizeof(line1),
+            "AVG:%sC T:%3uC",
+            avgText,
+            settings.temperature
+        );
+    }
+
+    // =================================================
+    // LINE 2 - WEIGHT
+    // =================================================
+
+    float currentWeight =
+        weightSensor.getWeight();
+
+    if (currentWeight < 0.0f)
+    {
+        currentWeight = 0.0f;
+    }
+
+    char weightText[8];
+
+    dtostrf(
+        currentWeight,
+        4,
+        0,
+        weightText
+    );
+
+    snprintf(
+        line2,
+        sizeof(line2),
+        "W:%sg >%4ug",
+        weightText,
+        (unsigned int)targetWeight
+    );
+
+    // =================================================
+    // LCD
+    // =================================================
+
+    display.print(
+        0,
+        0,
+        "                "
+    );
+
+    display.print(
+        0,
+        1,
+        "                "
+    );
+
+    display.print(
+        0,
+        0,
+        line1
+    );
+
+    display.print(
+        0,
+        1,
+        line2
+    );
+}
+// =====================================================
+// PAUSED
+// =====================================================
+
+void Application::handlePaused(
+    EncoderEvent event
+)
+{
+    if (event == ENCODER_CLICK)
+    {
+        Serial.println(
+            "Resuming dryer..."
+        );
+
+        dryer.start(
+            settings.temperature
+        );
+
+        heaterEnabled = true;
+
+        state = STATE_RUNNING;
+
+        drawRunningScreen();
+    }
+
+    else if (event == ENCODER_LONG_CLICK)
+    {
+        Serial.println(
+            "Drying cancelled."
+        );
+
+        dryer.stop();
+
+        heaterEnabled = false;
+
+        targetSoftwarePower = 0;
+
+        /*
+         * Reset SCR physically.
+         */
+
+        startSCRReset();
+
+        menuManager.openMain();
+
+        state = STATE_MENU;
+
+        drawCurrentMenu();
+    }
+}
+
+// =====================================================
+// PAUSED SCREEN
+// =====================================================
+
+void Application::drawPausedScreen()
+{
+    display.clear();
+
+    display.print(
+        0,
+        0,
+        "DRYER PAUSED"
+    );
+
+    display.print(
+        0,
+        1,
+        "Click=Resume"
+    );
+}
+
+// =====================================================
+// FINISHED
+// =====================================================
+
+void Application::handleFinished(
+    EncoderEvent event
+)
+{
+    /*
+     * ALWAYS keep requesting zero.
+     */
+
+    targetSoftwarePower = 0;
+
+    /*
+     * SCR reset continues in the background
+     * through updateSCRControl().
+     */
+
+    if (!finishScreenShown)
+    {
+        drawFinishedScreen();
+
+        finishScreenShown = true;
+    }
+
+    /*
+     * Encoder remains immediately responsive.
+     */
+
+    if (event == ENCODER_CLICK ||
+        event == ENCODER_LONG_CLICK)
+    {
+        menuManager.openMain();
+
+        state = STATE_MENU;
+
+        finishScreenShown = false;
+
+        drawCurrentMenu();
+    }
+}
+
+// =====================================================
+// FINISHED SCREEN
+// =====================================================
+
+void Application::drawFinishedScreen()
+{
+    display.clear();
+
+    display.print(
+        0,
+        0,
+        "Drying Finished"
+    );
+
+    display.print(
+        0,
+        1,
+        "Click = Menu"
+    );
+}
+
+// =====================================================
+// ERROR
+// =====================================================
+
+void Application::handleError(
+    EncoderEvent event
+)
+{
+    if (dryer.isRunning())
+    {
+        dryer.stop();
+    }
+
+    heaterEnabled = false;
+
+    targetSoftwarePower = 0;
+
+    /*
+     * Keep resetting SCR in background.
+     */
+
+    if (!scrResetInProgress &&
+        currentSoftwarePower > 0)
+    {
+        startSCRReset();
+    }
+
+    if (event == ENCODER_CLICK ||
+        event == ENCODER_LONG_CLICK)
+    {
+        menuManager.openMain();
+
+        state = STATE_MENU;
+
+        drawCurrentMenu();
+    }
+}
+
+// =====================================================
+// ERROR SCREEN
+// =====================================================
+
+void Application::drawErrorScreen()
+{
+    display.clear();
+
+    display.print(
+        0,
+        0,
+        "TEMP ERROR!"
+    );
+
+    display.print(
+        0,
+        1,
+        "Click = Menu"
+    );
+}
+// =========================================================
+// WEIGHT CONTROL
+// =========================================================
+void Application::updateWeightControl()
+{
+    if (state != STATE_RUNNING)
+    {
+        return;
+    }
+
+    // =================================================
+    // SENSOR VALIDATION
+    // =================================================
+
+    if (!weightSensor.isReady())
+    {
+        return;
+    }
+
+    if (weightSensor.isTaring())
+    {
+        startingWeightStableStart = 0;
+        return;
+    }
+
+    float currentWeight =
+        weightSensor.getWeight();
+
+    if (currentWeight < 0.0f)
+    {
+        currentWeight = 0.0f;
+    }
+
+    // =================================================
+    // STARTING WEIGHT
+    // =================================================
+
+    if (!startingWeightCaptured)
+    {
+        captureStartingWeight();
+
+        return;
+    }
+
+    // =================================================
+    // TARGET WEIGHT
+    // =================================================
+
+    checkTargetWeight();
+}
+// =========================================================
+// CAPTURE STARTING WEIGHT
+// =========================================================
+void Application::captureStartingWeight()
+{
+    float currentWeight =
+        weightSensor.getWeight();
+
+    if (currentWeight < 0.0f)
+    {
+        currentWeight = 0.0f;
+    }
+
+    // =================================================
+    // REQUIRE STABLE WEIGHT
+    // =================================================
+
+    if (!weightSensor.isStable())
+    {
+        startingWeightStableStart = 0;
+
+        return;
+    }
+
+    // =================================================
+    // START STABILITY TIMER
+    // =================================================
+
+    if (startingWeightStableStart == 0)
+    {
+        startingWeightStableStart =
+            millis();
+
+        Serial.println(
+            "[WEIGHT] Starting weight stability detected"
+        );
+
+        return;
+    }
+
+    // =================================================
+    // WAIT FOR STABILITY PERIOD
+    // =================================================
+
+    if (millis() -
+        startingWeightStableStart <
+        START_WEIGHT_STABLE_TIME)
+    {
+        return;
+    }
+
+    // =================================================
+    // CAPTURE STARTING WEIGHT
+    // =================================================
+
+    startingWeight =
+        currentWeight;
+
+    startingWeightCaptured =
+        true;
+
+    targetWeightDetected =
+        false;
+
+    targetWeightStartTime =
+        0;
+
+    Serial.print(
+        "[WEIGHT] Starting weight captured: "
+    );
+
+    Serial.print(
+        startingWeight,
+        2
+    );
+
+    Serial.println(
+        " g"
+    );
+}
+// =====================================================
+// TARGET WEIGHT CHECK
+// =====================================================
+void Application::checkTargetWeight()
+{
+    // =================================================
+    // SAFETY
+    // =================================================
+
+    if (state != STATE_RUNNING)
+    {
+        return;
+    }
+
+    if (!weightSensor.isReady())
+    {
+        return;
+    }
+
+    if (weightSensor.isTaring())
+    {
+        return;
+    }
+
+    // =================================================
+    // CURRENT WEIGHT
+    // =================================================
+
+    currentWeight =
+        weightSensor.getWeight();
+
+    if (currentWeight < 0.0f)
+    {
+        currentWeight = 0.0f;
+    }
+
+    // =================================================
+    // VALIDATE TARGET
+    // =================================================
+
+    if (startingWeight <= 0.0f)
+    {
+        return;
+    }
+
+    if (targetWeight <= 0.0f)
+    {
+        return;
+    }
+
+    // Target must be lower than starting weight
+    if (targetWeight >= startingWeight)
+    {
+        return;
+    }
+
+    // =================================================
+    // TARGET NOT YET REACHED
+    // =================================================
+
+    if (currentWeight >
+        (targetWeight + TARGET_WEIGHT_TOLERANCE))
+    {
+        if (weightTargetStartTime != 0)
+        {
+            Serial.println(
+                "[WEIGHT] Target no longer reached"
+            );
+        }
+
+        weightTargetStartTime = 0;
+        weightTargetReached = false;
+
+        return;
+    }
+
+    // =================================================
+    // TARGET WEIGHT REACHED
+    // =================================================
+
+    if (currentWeight <=
+        (targetWeight + TARGET_WEIGHT_TOLERANCE))
+    {
+        // -------------------------------------------------
+        // First detection
+        // -------------------------------------------------
+
+        if (weightTargetStartTime == 0)
+        {
+            weightTargetStartTime =
+                millis();
+
+            weightTargetReached =
+                false;
+
+            Serial.println();
+            Serial.println(
+                "[WEIGHT] Target weight reached"
+            );
+
+            Serial.print(
+                "[WEIGHT] Current: "
+            );
+
+            Serial.print(
+                currentWeight,
+                2
+            );
+
+            Serial.println(
+                " g"
+            );
+
+            Serial.print(
+                "[WEIGHT] Target: "
+            );
+
+            Serial.print(
+                targetWeight,
+                2
+            );
+
+            Serial.println(
+                " g"
+            );
+
+            Serial.println(
+                "[WEIGHT] Waiting for stable weight..."
+            );
+        }
+
+        // -------------------------------------------------
+        // Weight must be stable
+        // -------------------------------------------------
+
+        if (!weightSensor.isStable())
+        {
+            weightTargetReached =
+                false;
+
+            return;
+        }
+
+        // =================================================
+        // STABLE TARGET
+        // =================================================
+
+        if (millis() -
+            weightTargetStartTime >=
+            TARGET_WEIGHT_HOLD_TIME)
+        {
+            weightTargetReached =
+                true;
+
+            Serial.println();
+            Serial.println(
+                "=============================="
+            );
+
+            Serial.println(
+                "[WEIGHT] TARGET WEIGHT CONFIRMED"
+            );
+
+            Serial.println(
+                "=============================="
+            );
+
+            Serial.print(
+                "[WEIGHT] Starting: "
+            );
+
+            Serial.print(
+                startingWeight,
+                2
+            );
+
+            Serial.println(
+                " g"
+            );
+
+            Serial.print(
+                "[WEIGHT] Target: "
+            );
+
+            Serial.print(
+                targetWeight,
+                2
+            );
+
+            Serial.println(
+                " g"
+            );
+
+            Serial.print(
+                "[WEIGHT] Final: "
+            );
+
+            Serial.print(
+                currentWeight,
+                2
+            );
+
+            Serial.println(
+                " g"
+            );
+
+            // -------------------------------------------------
+            // Finish drying
+            // -------------------------------------------------
+
+            finishDrying();
+        }
+    }
+}
+// =========================================================
+// FINISH DRYING
+// =========================================================
+
+void Application::finishDrying()
+{
+    Serial.println();
+    Serial.println(
+        "================================"
+    );
+
+    Serial.println(
+        "[DRYING] TARGET WEIGHT REACHED"
+    );
+
+    Serial.println(
+        "================================"
+    );
+
+    // -------------------------------------------------
+    // Disable heater
+    // -------------------------------------------------
+
+    heaterEnabled = false;
+
+    targetSoftwarePower = 0;
+
+    // -------------------------------------------------
+    // Force SCR shutdown
+    // -------------------------------------------------
+
+    startSCRReset();
+
+    // -------------------------------------------------
+    // Save final weight
+    // -------------------------------------------------
+
+    currentWeight =
+        weightSensor.getWeight();
+
+    Serial.print(
+        "[DRYING] Starting weight: "
+    );
+
+    Serial.print(
+        startingWeight,
+        2
+    );
+
+    Serial.println(
+        " g"
+    );
+
+    Serial.print(
+        "[DRYING] Target weight: "
+    );
+
+    Serial.print(
+        targetWeight,
+        2
+    );
+
+    Serial.println(
+        " g"
+    );
+
+    Serial.print(
+        "[DRYING] Final weight: "
+    );
+
+    Serial.print(
+        currentWeight,
+        2
+    );
+
+    Serial.println(
+        " g"
+    );
+
+    // -------------------------------------------------
+    // Change application state
+    // -------------------------------------------------
+
+    state = STATE_FINISHED;
+
+    finishScreenShown = false;
 }

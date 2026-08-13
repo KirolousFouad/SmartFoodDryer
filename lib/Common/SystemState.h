@@ -1,0 +1,23 @@
+#ifndef SYSTEM_STATE_H
+#define SYSTEM_STATE_H
+
+enum SystemState
+{
+    STATE_MENU = 0,
+
+    STATE_MANUAL_TEMP,
+
+    STATE_MANUAL_WEIGHT,
+
+    STATE_READY,
+
+    STATE_RUNNING,
+
+    STATE_PAUSED,
+
+    STATE_FINISHED,
+
+    STATE_ERROR
+};
+
+#endif
