@@ -55,8 +55,6 @@ Application::Application()
       heaterEnabled(false),
       finishScreenShown(false),
       targetReached(false),
-
-      currentSoftwarePower(0),
       targetSoftwarePower(0),
 
       scrResetInProgress(false),
@@ -218,7 +216,6 @@ void Application::begin()
      */
     scr.resetToZero();
 
-    currentSoftwarePower = 0;
     targetSoftwarePower = 0;
 
     scrResetInProgress = false;
@@ -608,6 +605,9 @@ uint8_t Application::calculateHeaterPower(
 // =====================================================
 // SCR CONTROL
 // =====================================================
+// =====================================================
+// SCR CONTROL
+// =====================================================
 
 void Application::updateSCRControl()
 {
@@ -626,7 +626,7 @@ void Application::updateSCRControl()
     // ALREADY AT TARGET
     // =================================================
 
-    if (currentSoftwarePower ==
+    if (scr.getPower() ==
         targetSoftwarePower)
     {
         return;
@@ -636,11 +636,6 @@ void Application::updateSCRControl()
     // ONE PHYSICAL PULSE AT A TIME
     // =================================================
 
-    /*
-     * Never send another pulse until the previous
-     * physical button action has completed.
-     */
-
     if (millis() - lastSCRPulse < 300)
     {
         return;
@@ -649,95 +644,17 @@ void Application::updateSCRControl()
     lastSCRPulse = millis();
 
     // =================================================
-    // INCREASE
+    // MOVE ONE STEP
     // =================================================
 
-    if (currentSoftwarePower <
-        targetSoftwarePower)
-    {
-        increaseSCRPulse();
-    }
-
-    // =================================================
-    // DECREASE
-    // =================================================
-
-    else
-    {
-        decreaseSCRPulse();
-    }
+    scr.moveOneStepToward(
+        targetSoftwarePower
+    );
 }
 
 // =====================================================
-// INCREASE SCR ONE PHYSICAL STEP
+// START SCR RESET
 // =====================================================
-
-void Application::increaseSCRPulse()
-{
-    if (currentSoftwarePower >= 100)
-    {
-        currentSoftwarePower = 100;
-
-        return;
-    }
-
-    /*
-     * SCRController::increase()
-     *
-     * = ONE physical button press
-     *
-     * = ONE SCR %
-     */
-
-    scr.increase();
-
-    currentSoftwarePower++;
-
-    Serial.print(
-        "[SCR] Physical pulse +1 -> "
-    );
-
-    Serial.print(
-        currentSoftwarePower
-    );
-
-    Serial.println("%");
-}
-
-// =====================================================
-// DECREASE SCR ONE PHYSICAL STEP
-// =====================================================
-
-void Application::decreaseSCRPulse()
-{
-    if (currentSoftwarePower == 0)
-    {
-        return;
-    }
-
-    /*
-     * SCRController::decrease()
-     *
-     * = ONE physical button press
-     *
-     * = ONE SCR %
-     */
-
-    scr.decrease();
-
-    currentSoftwarePower--;
-
-    Serial.print(
-        "[SCR] Physical pulse -1 -> "
-    );
-
-    Serial.print(
-        currentSoftwarePower
-    );
-
-    Serial.println("%");
-}
-
 // =====================================================
 // START SCR RESET
 // =====================================================
@@ -754,12 +671,15 @@ void Application::startSCRReset()
     );
 
     /*
-     * We don't know the actual physical SCR value.
+     * We do not know the actual physical SCR position.
      *
-     * Send enough decrease pulses to guarantee zero.
+     * Therefore send 100 physical decrease pulses.
      *
-     * One pulse every update cycle.
+     * The SCRController::resetStep() method always sends
+     * a physical decrease pulse, even when its software
+     * power is already 0%.
      */
+
     scrResetInProgress = true;
 
     scrResetStepsRemaining = 100;
@@ -768,7 +688,9 @@ void Application::startSCRReset()
 
     lastSCRPulse = millis();
 }
-
+// =====================================================
+// UPDATE SCR RESET
+// =====================================================
 // =====================================================
 // UPDATE SCR RESET
 // =====================================================
@@ -780,14 +702,9 @@ void Application::updateSCRReset()
         return;
     }
 
-    /*
-     * Wait between physical button presses.
-     *
-     * This keeps:
-     * - encoder responsive
-     * - LCD responsive
-     * - temperature readings running
-     */
+    // -------------------------------------------------
+    // Wait between physical reset pulses
+    // -------------------------------------------------
 
     if (millis() - lastSCRPulse < 300)
     {
@@ -796,13 +713,15 @@ void Application::updateSCRReset()
 
     lastSCRPulse = millis();
 
+    // -------------------------------------------------
+    // Send one physical decrease pulse
+    // -------------------------------------------------
+
     if (scrResetStepsRemaining > 0)
     {
-        scr.decrease();
+        scr.resetStep();
 
         scrResetStepsRemaining--;
-
-        currentSoftwarePower = 0;
 
         Serial.print(
             "[SCR RESET] Pulse sent | Remaining: "
@@ -813,11 +732,13 @@ void Application::updateSCRReset()
         );
     }
 
+    // -------------------------------------------------
+    // Reset complete
+    // -------------------------------------------------
+
     if (scrResetStepsRemaining == 0)
     {
         scrResetInProgress = false;
-
-        currentSoftwarePower = 0;
 
         targetSoftwarePower = 0;
 
@@ -826,7 +747,6 @@ void Application::updateSCRReset()
         );
     }
 }
-
 // =====================================================
 // STOP SCR MOVEMENT
 // =====================================================
@@ -834,7 +754,7 @@ void Application::updateSCRReset()
 void Application::stopSCRMovement()
 {
     targetSoftwarePower =
-        currentSoftwarePower;
+        scr.getPower();
 }
 // =====================================================
 // TARGET TEMPERATURE HOLD
@@ -1404,7 +1324,6 @@ void Application::handleReady(
         // RESET SOFTWARE CONTROL
         // =================================================
 
-        currentSoftwarePower = 0;
 
         targetSoftwarePower = 0;
 
@@ -1798,29 +1717,48 @@ void Application::drawFinishedScreen()
 // =====================================================
 // ERROR
 // =====================================================
+// =====================================================
+// ERROR
+// =====================================================
 
 void Application::handleError(
     EncoderEvent event
 )
 {
+    // -------------------------------------------------
+    // Stop dryer immediately
+    // -------------------------------------------------
+
     if (dryer.isRunning())
     {
         dryer.stop();
     }
 
+    // -------------------------------------------------
+    // Disable heater
+    // -------------------------------------------------
+
     heaterEnabled = false;
+
+    // -------------------------------------------------
+    // Request SCR = 0%
+    // -------------------------------------------------
 
     targetSoftwarePower = 0;
 
-    /*
-     * Keep resetting SCR in background.
-     */
+    // -------------------------------------------------
+    // Keep resetting SCR in background
+    // -------------------------------------------------
 
     if (!scrResetInProgress &&
-        currentSoftwarePower > 0)
+        scr.getPower() > 0)
     {
         startSCRReset();
     }
+
+    // -------------------------------------------------
+    // Return to menu
+    // -------------------------------------------------
 
     if (event == ENCODER_CLICK ||
         event == ENCODER_LONG_CLICK)
@@ -1832,7 +1770,6 @@ void Application::handleError(
         drawCurrentMenu();
     }
 }
-
 // =====================================================
 // ERROR SCREEN
 // =====================================================
