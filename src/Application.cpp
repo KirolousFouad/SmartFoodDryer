@@ -31,12 +31,18 @@ Application::Application()
           MAX6675_CS,
           MAX6675_SO),
 
+      buzzer(
+          BUZZER_PIN),
+
       settings(),
 
       state(STATE_MENU),
       weightSensor(
           HX711_DOUT,
           HX711_SCK),
+
+      coolingAfterDrying(false),
+      coolingComplete(false),
 
       startingWeight(0.0f),
       currentWeight(0.0f),
@@ -55,7 +61,6 @@ Application::Application()
       heaterEnabled(false),
       finishScreenShown(false),
       targetReached(false),
-      currentSoftwarePower(0),
       targetSoftwarePower(0),
 
       scrResetInProgress(false),
@@ -169,6 +174,16 @@ void Application::begin()
     weightSensor.begin();
 
     Serial.println("[INIT] Weight Sensor OK");
+
+    // =================================================
+    // BUZZER
+    // =================================================
+
+    Serial.println("[INIT] Buzzer...");
+
+    buzzer.begin();
+
+    Serial.println("[INIT] Buzzer OK");
     // =========================================================
     // FANS
     // =========================================================
@@ -250,6 +265,9 @@ void Application::begin()
 
     targetReached = false;
 
+    coolingAfterDrying = false;
+    coolingComplete = false;
+
     menuManager.openMain();
 
     display.clear();
@@ -273,6 +291,12 @@ void Application::update()
     // =================================================
 
     encoder.update();
+
+    // =================================================
+    // BUZZER
+    // =================================================
+
+    buzzer.update();
 
     EncoderEvent event =
         encoder.getEvent();
@@ -340,6 +364,8 @@ void Application::update()
     // =================================================
 
     updateFanControl();
+
+    updatePostDryingCooling();
 
     // =================================================
     // APPLICATION STATE
@@ -436,6 +462,10 @@ void Application::updateTemperatureControl()
     if (!isnan(safetyTemperature) &&
         safetyTemperature >= MAX_SAFE_TEMP)
     {
+        if (state != STATE_ERROR)
+        {
+            buzzer.error();
+        }
         Serial.println();
         Serial.println("==============================");
         Serial.println(" !!! SAFETY SHUTDOWN !!!");
@@ -470,9 +500,11 @@ void Application::updateTemperatureControl()
 
     if (isnan(chamberTemperature))
     {
+        buzzer.warning();
         Serial.println(
             "[CONTROL] Invalid chamber temperature"
         );
+
 
         return;
     }
@@ -818,6 +850,7 @@ void Application::handleMenu(
 
     else if (event == ENCODER_CLICK)
     {
+        buzzer.beepShort();
         MenuAction action =
             menu->getSelectedAction();
 
@@ -991,6 +1024,7 @@ void Application::handleManualTemperature(
 
     else if (event == ENCODER_CLICK)
     {
+        buzzer.beepShort();
         state = STATE_MANUAL_WEIGHT;
 
         drawManualWeight();
@@ -1066,6 +1100,7 @@ void Application::handleManualWeight(
 
     else if (event == ENCODER_CLICK)
     {
+        buzzer.beepShort();
         state = STATE_READY;
 
         drawReadyScreen();
@@ -1320,6 +1355,7 @@ void Application::handleReady(
         );
 
         heaterEnabled = true;
+        buzzer.success();
 
         // =================================================
         // RESET SOFTWARE CONTROL
@@ -1419,6 +1455,7 @@ void Application::handleRunning(EncoderEvent event)
     // -------------------------------------------------
     if (event == ENCODER_CLICK)
     {
+        buzzer.beepShort();
         Serial.println("[RUNNING] Pause requested");
 
         dryer.stop();
@@ -1441,25 +1478,46 @@ void Application::handleRunning(EncoderEvent event)
     // -------------------------------------------------
     // LONG CLICK = FINISH
     // -------------------------------------------------
-
     if (event == ENCODER_LONG_CLICK)
     {
         Serial.println("[RUNNING] Finish requested");
 
         dryer.stop();
+
         heaterEnabled = false;
 
-        // Immediately request SCR = 0%.
+        // Force heater power request to zero.
         targetSoftwarePower = 0;
 
-        state = STATE_FINISHED;
-        finishScreenShown = false;
+        // Physically reset SCR toward zero.
+        startSCRReset();
+
+        // -------------------------------------------------
+        // Start post-drying cooling
+        // -------------------------------------------------
+
+        coolingAfterDrying = true;
+        coolingComplete = false;
+
+        setCirculationFan(false);
+
+        setCoolingFanPower(100);
+
+        Serial.println(
+            "[DRYING] Starting post-drying cooling");
+
+        Serial.print(
+            "[DRYING] Cooling until chamber reaches ");
+
+        Serial.print(
+            COOLING_FINISH_TEMP);
+
+        Serial.println(" C");
 
         drawFinishedScreen();
 
         return;
     }
-
     // -------------------------------------------------
     // TEMPERATURE HOLD
     // -------------------------------------------------
@@ -1593,6 +1651,7 @@ void Application::handlePaused(
 
     if (event == ENCODER_CLICK)
     {
+        
         Serial.println(
             "[PAUSED] Resume requested"
         );
@@ -1606,6 +1665,7 @@ void Application::handlePaused(
 
             return;
         }
+        buzzer.beepShort();
 
         // Restart dryer.
         dryer.start(
@@ -1766,7 +1826,7 @@ void Application::handleError(
     targetSoftwarePower = 0;
 
     if (!scrResetInProgress &&
-        currentSoftwarePower > 0)
+        scr.getPower() > 0)
     {
         startSCRReset();
     }
@@ -1786,6 +1846,8 @@ void Application::handleError(
 
             return;
         }
+
+        buzzer.stop();
 
         menuManager.openMain();
 
@@ -2201,9 +2263,28 @@ void Application::finishDrying()
     // Change application state
     // -------------------------------------------------
 
-    state = STATE_FINISHED;
+    // -------------------------------------------------
+// Start post-drying cooling
+// -------------------------------------------------
 
-    finishScreenShown = false;
+    coolingAfterDrying = true;
+    coolingComplete = false;
+
+    setCirculationFan(false);
+
+    setCoolingFanPower(100);
+
+    Serial.println(
+        "[DRYING] Starting post-drying cooling");
+
+    Serial.print(
+        "[DRYING] Cooling until chamber reaches ");
+
+    Serial.print(
+        COOLING_FINISH_TEMP);
+
+    Serial.println(" C");
+    buzzer.success();
 }
 // =========================================================
 // CIRCULATION FAN
@@ -2233,7 +2314,6 @@ void Application::setCirculationFan(bool on)
 // =========================================================
 // COOLING FAN PWM
 // =========================================================
-
 void Application::setCoolingFanPower(uint8_t power)
 {
     if (power > 100)
@@ -2243,19 +2323,21 @@ void Application::setCoolingFanPower(uint8_t power)
 
     coolingFanPower = power;
 
-    uint8_t pwmValue =
-        map(
-            power,
-            0,
-            100,
-            0,
-            255
-        );
+    // 0% = PWM 0
+    // 100% = PWM 255
+    uint8_t pwmValue = map(
+        power,
+        0,
+        100,
+        0,
+        255
+    );
 
     analogWrite(
         COOLING_FAN_PWM_PIN,
         pwmValue
     );
+
 }
 // =========================================================
 // FAN CONTROL
@@ -2281,6 +2363,14 @@ void Application::updateFanControl()
     // =====================================================
 
     // Cooling fan is only needed during drying.
+    if (coolingAfterDrying)
+    {
+        setCirculationFan(false);
+        setCoolingFanPower(100);
+
+        return;
+    }
+
     if (state != STATE_RUNNING)
     {
         setCoolingFanPower(0);
@@ -2369,4 +2459,84 @@ void Application::updateFanControl()
     setCoolingFanPower(
         newCoolingPower
     );
+    
+}
+// =====================================================
+// POST-DRYING COOLING
+// =====================================================
+
+void Application::updatePostDryingCooling()
+{
+    if (!coolingAfterDrying)
+    {
+        return;
+    }
+
+    float temperature =
+        temperatureManager.getAverageTemperature();
+
+    // -------------------------------------------------
+    // Invalid temperature
+    // -------------------------------------------------
+
+    if (isnan(temperature))
+    {
+        // Keep cooling for safety.
+        setCirculationFan(false);
+        setCoolingFanPower(100);
+
+        return;
+    }
+
+    // -------------------------------------------------
+    // Cooling still required
+    // -------------------------------------------------
+
+    if (temperature > COOLING_FINISH_TEMP)
+    {
+        setCirculationFan(false);
+        setCoolingFanPower(100);
+
+        return;
+    }
+
+    // -------------------------------------------------
+    // Cooling complete
+    // -------------------------------------------------
+
+    coolingAfterDrying = false;
+    coolingComplete = true;
+
+    setCirculationFan(false);
+    setCoolingFanPower(0);
+
+    Serial.println();
+    Serial.println(
+        "================================");
+
+    Serial.println(
+        "[COOLING] COOLING COMPLETE");
+
+    Serial.print(
+        "[COOLING] Chamber temperature: ");
+
+    Serial.print(
+        temperature);
+
+    Serial.println(" C");
+
+    Serial.println(
+        "================================");
+
+    // -------------------------------------------------
+    // Completion notification
+    // -------------------------------------------------
+
+    buzzer.success();
+
+    state = STATE_FINISHED;
+
+    finishScreenShown = false;
+
+    drawFinishedScreen();
 }

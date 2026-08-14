@@ -160,7 +160,7 @@ void SCRController::resetToZero()
      * during normal operation.
      */
 
-    for (uint8_t i = 0; i < 100; i++)
+    for (uint8_t i = 0; i < 70; i++)
     {
         pressButton(decreasePin);
     }

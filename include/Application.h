@@ -13,6 +13,7 @@
 #include "RecipeDatabase.h"
 #include "DryerSettings.h"
 #include "WeightSensor.h"
+#include "Buzzer.h"
 
 // =====================================================
 // SAFETY
@@ -69,6 +70,8 @@ private:
 
     TemperatureManager temperatureManager;
 
+    Buzzer buzzer;
+
     // =================================================
     // SETTINGS
     // =================================================
@@ -83,6 +86,13 @@ private:
 
     WeightSensor weightSensor;
 
+    // =================================================
+    // POST-DRYING COOLING
+    // =================================================
+
+    bool coolingAfterDrying;
+
+    bool coolingComplete;
     // =================================================
     // DRYING WEIGHT CONTROL
     // =================================================
@@ -125,8 +135,6 @@ private:
     // =================================================
     // SCR CONTROL
     // =================================================
-
-    uint8_t currentSoftwarePower;
     uint8_t targetSoftwarePower;
 
     bool scrResetInProgress;
@@ -261,6 +269,7 @@ private:
     void setCirculationFan(bool on);
 
     void setCoolingFanPower(uint8_t power);
+    void updatePostDryingCooling();
 };
 
 #endif
