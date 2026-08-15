@@ -1,50 +1,107 @@
-#include "Recipes.h"
 #include "RecipeDatabase.h"
 
-static const Recipe recipes[RECIPE_COUNT] =
+// =====================================================
+// RECIPE DATABASE
+// =====================================================
+//
+// dryYieldPercent means:
+//
+// final dry weight
+// ---------------- × 100
+// starting fresh weight
+//
+// These values are recommended starting values.
+// Actual yield depends on fruit variety, maturity,
+// slice thickness, pretreatment, dryer airflow,
+// temperature and final moisture content.
+// =====================================================
+
+static const Recipe recipes[] =
 {
+    // -------------------------------------------------
+    // APPLE
+    // -------------------------------------------------
+
     {
-        "Mango",
+        "Apple",
         0,
         60,
-        300
+        12
     },
+
+    // -------------------------------------------------
+    // BANANA
+    // -------------------------------------------------
 
     {
         "Banana",
         1,
-        65,
-        250
+        60,
+        22
     },
 
+    // -------------------------------------------------
+    // MANGO
+    // -------------------------------------------------
+
     {
-        "Apple",
+        "Mango",
         2,
         60,
-        250
+        18
     },
 
-    {
-        "Orange",
-        3,
-        60,
-        300
-    },
+    // -------------------------------------------------
+    // STRAWBERRY
+    // -------------------------------------------------
 
     {
         "Strawberry",
+        3,
+        55,
+        10
+    },
+
+    // -------------------------------------------------
+    // PINEAPPLE
+    // -------------------------------------------------
+
+    {
+        "Pineapple",
         4,
         55,
-        200
+        12
     }
 };
 
-const Recipe& RecipeDatabase::getRecipe(uint8_t id)
+// =====================================================
+// RECIPE COUNT
+// =====================================================
+
+static const uint8_t RECIPE_COUNT =
+    sizeof(recipes) / sizeof(recipes[0]);
+
+// =====================================================
+// GET RECIPE
+// =====================================================
+
+const Recipe& RecipeDatabase::getRecipe(
+    uint8_t recipeID
+)
 {
-    if (id >= RECIPE_COUNT)
+    if (recipeID >= RECIPE_COUNT)
     {
         return recipes[0];
     }
 
-    return recipes[id];
+    return recipes[recipeID];
+}
+
+// =====================================================
+// GET RECIPE COUNT
+// =====================================================
+
+uint8_t RecipeDatabase::getRecipeCount()
+{
+    return RECIPE_COUNT;
 }

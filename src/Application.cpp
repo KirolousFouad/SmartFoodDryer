@@ -919,9 +919,6 @@ void Application::handleMenuAction(
             settings.temperature =
                 recipe.temperature;
 
-            settings.targetWeight =
-                recipe.targetWeight;
-
             settings.autoMode = true;
 
             Serial.println();
@@ -936,9 +933,12 @@ void Application::handleMenuAction(
             Serial.print(recipe.temperature);
             Serial.println(" C");
 
-            Serial.print("Target weight: ");
-            Serial.print(recipe.targetWeight);
-            Serial.println(" g");
+            Serial.print("Dry yield: ");
+            Serial.print(recipe.dryYieldPercent);
+            Serial.println("%");
+
+            Serial.println(
+                "Target weight will be calculated from starting weight.");
 
             state = STATE_READY;
 
@@ -1150,11 +1150,14 @@ void Application::drawManualWeight()
 // =====================================================
 // READY
 // =====================================================
-
 void Application::handleReady(
     EncoderEvent event
 )
 {
+    // =================================================
+    // START DRYING
+    // =================================================
+
     if (event == ENCODER_CLICK)
     {
         // =================================================
@@ -1173,14 +1176,10 @@ void Application::handleReady(
         if (!weightSensor.isReady())
         {
             Serial.println(
-                "[READY] ERROR: Weight sensor not ready");
-
-            buzzer.error();
-
-            error = ERROR_WEIGHT_SENSOR;
+                "[READY] ERROR: Weight sensor not ready"
+            );
 
             state = STATE_ERROR;
-
             drawErrorScreen();
 
             return;
@@ -1196,52 +1195,188 @@ void Application::handleReady(
         }
 
         // =================================================
-        // CAPTURE TARGET WEIGHT
+        // CAPTURE STARTING WEIGHT
         // =================================================
 
-        targetWeight =
-            settings.targetWeight;
+        captureStartingWeight();
 
-        if (targetWeight <= 0.0f)
+        if (startingWeight <= 0.0f)
         {
             Serial.println(
-                "[READY] ERROR: Invalid target weight");
-
-            buzzer.error();
-
-            error = ERROR_INVALID_TARGET_WEIGHT;
+                "[READY] ERROR: Invalid starting weight"
+            );
 
             state = STATE_ERROR;
-
             drawErrorScreen();
 
             return;
         }
 
         // =================================================
-        // CAPTURE STARTING WEIGHT
+        // CALCULATE TARGET WEIGHT
         // =================================================
 
-        captureStartingWeight();
-
-        // -------------------------------------------------
-        // Verify starting weight
-        // -------------------------------------------------
-
-        if (startingWeight <= 0.0f)
+        if (settings.autoMode)
         {
+            // -------------------------------------------------
+            // AUTO MODE
+            // -------------------------------------------------
+
+            const Recipe& recipe =
+                RecipeDatabase::getRecipe(
+                    settings.recipeID
+                );
+
+            // -------------------------------------------------
+            // Validate recipe percentage
+            // -------------------------------------------------
+
+            if (recipe.dryYieldPercent == 0 ||
+                recipe.dryYieldPercent >= 100)
+            {
+                Serial.println(
+                    "[READY] ERROR: Invalid recipe dry yield"
+                );
+
+                Serial.print(
+                    "[READY] Yield: "
+                );
+
+                Serial.print(
+                    recipe.dryYieldPercent
+                );
+
+                Serial.println("%");
+
+                state = STATE_ERROR;
+                drawErrorScreen();
+
+                return;
+            }
+
+            // -------------------------------------------------
+            // Calculate target
+            // -------------------------------------------------
+
+            targetWeight =
+                startingWeight *
+                (
+                    (float)recipe.dryYieldPercent
+                    / 100.0f
+                );
+
+            // -------------------------------------------------
+            // Diagnostics
+            // -------------------------------------------------
+
+            Serial.println();
             Serial.println(
-                "[READY] ERROR: Invalid starting weight");
+                "=============================="
+            );
 
-            buzzer.error();
+            Serial.println(
+                "[AUTO] TARGET CALCULATION"
+            );
 
-            error = ERROR_INVALID_STARTING_WEIGHT;
+            Serial.println(
+                "=============================="
+            );
 
-            state = STATE_ERROR;
+            Serial.print(
+                "[AUTO] Recipe: "
+            );
 
-            drawErrorScreen();
+            Serial.println(
+                recipe.name
+            );
 
-            return;
+            Serial.print(
+                "[AUTO] Starting weight: "
+            );
+
+            Serial.print(
+                startingWeight,
+                2
+            );
+
+            Serial.println(
+                " g"
+            );
+
+            Serial.print(
+                "[AUTO] Dry yield: "
+            );
+
+            Serial.print(
+                recipe.dryYieldPercent
+            );
+
+            Serial.println(
+                "%"
+            );
+
+            Serial.print(
+                "[AUTO] Target weight: "
+            );
+
+            Serial.print(
+                targetWeight,
+                2
+            );
+
+            Serial.println(
+                " g"
+            );
+        }
+
+        // =================================================
+        // MANUAL MODE
+        // =================================================
+
+        else
+        {
+            targetWeight =
+                settings.targetWeight;
+
+            if (targetWeight <= 0.0f)
+            {
+                Serial.println(
+                    "[READY] ERROR: Invalid target weight"
+                );
+
+                state = STATE_ERROR;
+                drawErrorScreen();
+
+                return;
+            }
+
+            Serial.println();
+
+            Serial.print(
+                "[MANUAL] Starting weight: "
+            );
+
+            Serial.print(
+                startingWeight,
+                2
+            );
+
+            Serial.println(
+                " g"
+            );
+
+            Serial.print(
+                "[MANUAL] Target weight: "
+            );
+
+            Serial.print(
+                targetWeight,
+                2
+            );
+
+            Serial.println(
+                " g"
+            );
         }
 
         // =================================================
@@ -1252,32 +1387,40 @@ void Application::handleReady(
         {
             Serial.println();
             Serial.println(
-                "[READY] ERROR: Target weight must be lower than starting weight");
+                "[READY] ERROR: Target weight must be"
+            );
+
+            Serial.println(
+                "[READY] lower than starting weight"
+            );
 
             Serial.print(
-                "[READY] Starting: ");
+                "[READY] Starting: "
+            );
 
             Serial.print(
                 startingWeight,
-                2);
+                2
+            );
 
-            Serial.println(" g");
+            Serial.println(
+                " g"
+            );
 
             Serial.print(
-                "[READY] Target: ");
+                "[READY] Target: "
+            );
 
             Serial.print(
                 targetWeight,
-                2);
+                2
+            );
 
-            Serial.println(" g");
-
-            buzzer.error();
-
-            error = ERROR_TARGET_WEIGHT_INVALID;
+            Serial.println(
+                " g"
+            );
 
             state = STATE_ERROR;
-
             drawErrorScreen();
 
             return;
@@ -1308,7 +1451,9 @@ void Application::handleReady(
             settings.temperature
         );
 
-        Serial.println(" C");
+        Serial.println(
+            " C"
+        );
 
         Serial.print(
             "Starting weight: "
@@ -1319,7 +1464,9 @@ void Application::handleReady(
             2
         );
 
-        Serial.println(" g");
+        Serial.println(
+            " g"
+        );
 
         Serial.print(
             "Target weight: "
@@ -1330,7 +1477,9 @@ void Application::handleReady(
             2
         );
 
-        Serial.println(" g");
+        Serial.println(
+            " g"
+        );
 
         // =================================================
         // RECIPE / MODE
@@ -1344,11 +1493,29 @@ void Application::handleReady(
                 );
 
             Serial.print(
+                "Mode: AUTO"
+            );
+
+            Serial.println();
+
+            Serial.print(
                 "Recipe: "
             );
 
             Serial.println(
                 recipe.name
+            );
+
+            Serial.print(
+                "Dry yield: "
+            );
+
+            Serial.print(
+                recipe.dryYieldPercent
+            );
+
+            Serial.println(
+                "%"
             );
         }
         else
@@ -1367,12 +1534,12 @@ void Application::handleReady(
         );
 
         heaterEnabled = true;
-        buzzer.success();
 
         // =================================================
         // RESET SOFTWARE CONTROL
         // =================================================
 
+        currentSoftwarePower = 0;
 
         targetSoftwarePower = 0;
 
@@ -1392,6 +1559,9 @@ void Application::handleReady(
         lastDisplayUpdate =
             millis();
 
+        lastTemperatureControl =
+            millis();
+
         // =================================================
         // ENTER RUNNING STATE
         // =================================================
@@ -1400,7 +1570,13 @@ void Application::handleReady(
             STATE_RUNNING;
 
         drawRunningScreen();
+
+        return;
     }
+
+    // =================================================
+    // LONG CLICK = BACK TO MENU
+    // =================================================
 
     else if (event == ENCODER_LONG_CLICK)
     {
@@ -1414,7 +1590,6 @@ void Application::handleReady(
 // =====================================================
 // READY SCREEN
 // =====================================================
-
 void Application::drawReadyScreen()
 {
     char line[17];
@@ -1428,10 +1603,22 @@ void Application::drawReadyScreen()
                 settings.recipeID
             );
 
+        // -------------------------------------------------
+        // Line 1
+        // -------------------------------------------------
+
+        snprintf(
+            line,
+            sizeof(line),
+            "%s %u%%",
+            recipe.name,
+            recipe.dryYieldPercent
+        );
+
         display.print(
             0,
             0,
-            recipe.name
+            line
         );
     }
     else
@@ -1442,6 +1629,10 @@ void Application::drawReadyScreen()
             "Manual Ready"
         );
     }
+
+    // -------------------------------------------------
+    // Line 2
+    // -------------------------------------------------
 
     snprintf(
         line,

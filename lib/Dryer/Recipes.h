@@ -1,7 +1,11 @@
-#ifndef RECIPE_H
-#define RECIPE_H
+#ifndef RECIPES_H
+#define RECIPES_H
 
 #include <Arduino.h>
+
+// =====================================================
+// RECIPE STRUCTURE
+// =====================================================
 
 struct Recipe
 {
@@ -9,9 +13,17 @@ struct Recipe
 
     uint8_t id;
 
+    // Recommended drying temperature
     uint8_t temperature;
 
-    uint16_t targetWeight;
+    // Expected final dry weight as percentage
+    // of the starting fresh weight.
+    //
+    // Example:
+    // 1000 g starting weight
+    // 12% yield
+    // -> 120 g target weight
+    uint8_t dryYieldPercent;
 };
 
 #endif

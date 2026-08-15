@@ -150,6 +150,7 @@ private:
     // =================================================
     // SCR CONTROL
     // =================================================
+    uint8_t currentSoftwarePower;
     uint8_t targetSoftwarePower;
 
     bool scrResetInProgress;

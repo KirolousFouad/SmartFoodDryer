@@ -3,13 +3,15 @@
 
 #include "Recipes.h"
 
-#define RECIPE_COUNT 5
-
 class RecipeDatabase
 {
 public:
 
-    static const Recipe& getRecipe(uint8_t id);
+    static const Recipe& getRecipe(
+        uint8_t recipeID
+    );
+
+    static uint8_t getRecipeCount();
 };
 
 #endif
