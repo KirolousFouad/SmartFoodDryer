@@ -27,6 +27,9 @@ constexpr float MAX_SAFE_TEMP = 120.0f;
 
 enum ApplicationState
 {
+    STATE_TARE_CONFIRM,
+    STATE_TARING,
+
     STATE_MENU,
 
     STATE_MANUAL_TEMP,
@@ -119,6 +122,8 @@ private:
     unsigned long weightTargetStartTime;
 
     bool weightTargetReached;
+    bool startupTareScreenShown;
+    bool startupTareRequested;
     // =================================================
     // TIMERS
     // =================================================
@@ -293,6 +298,18 @@ private:
     void setCoolingFanPower(uint8_t power);
     void updatePostDryingCooling();
     const char* getErrorText() const;
+
+    void handleTareConfirm(
+        EncoderEvent event);
+
+    void handleTaring();
+
+    void drawTareConfirmScreen();
+    void handleStartupTare(
+        EncoderEvent event);
+
+    void drawStartupTare();
+    void drawTaringScreen();
 };
 
 #endif

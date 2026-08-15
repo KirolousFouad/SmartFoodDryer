@@ -36,7 +36,7 @@ Application::Application()
 
       settings(),
 
-      state(STATE_MENU),
+      state(STATE_TARE_CONFIRM),
       error(ERROR_NONE),
       weightSensor(
           HX711_DOUT,
@@ -105,13 +105,11 @@ void Application::begin()
 
     display.center(
         0,
-        "Smart Dryer"
-    );
+        "Smart Dryer");
 
     display.center(
         1,
-        "Starting..."
-    );
+        "Starting...");
 
     delay(1000);
 
@@ -176,6 +174,18 @@ void Application::begin()
     weightSensor.begin();
 
     Serial.println("[INIT] Weight Sensor OK");
+
+    // =================================================
+    // STARTUP TARE CONFIRMATION
+    // =================================================
+
+    state = STATE_TARE_CONFIRM;
+    startupTareScreenShown = false;
+
+    Serial.println();
+    Serial.println("==============================");
+    Serial.println(" WAITING FOR LOAD CELL");
+    Serial.println("==============================");
 
     // =================================================
     // BUZZER
@@ -270,22 +280,26 @@ void Application::begin()
     coolingAfterDrying = false;
     coolingComplete = false;
 
-    menuManager.openMain();
+    // =================================================
+    // STARTUP TARE
+    // =================================================
+    state = STATE_TARE_CONFIRM;
 
-    display.clear();
-
-    drawCurrentMenu();
+    startupTareScreenShown = false;
 
     Serial.println();
     Serial.println("==============================");
-    Serial.println(" SYSTEM READY");
+    Serial.println(" STARTUP TARE REQUIRED");
     Serial.println("==============================");
+    Serial.println(
+        "[STARTUP] Remove everything from dryer.");
+    Serial.println(
+        "[STARTUP] Press encoder to tare.");
+
+    // =====================================================
+    // UPDATE
+    // =====================================================
 }
-
-// =====================================================
-// UPDATE
-// =====================================================
-
 void Application::update()
 {
     // =================================================
@@ -375,55 +389,66 @@ void Application::update()
 
     switch (state)
     {
-        case STATE_MENU:
+    case STATE_TARE_CONFIRM:
 
-            handleMenu(event);
+        handleTareConfirm(event);
 
-            break;
+        break;
 
-        case STATE_MANUAL_TEMP:
+    case STATE_TARING:
 
-            handleManualTemperature(event);
+        handleTaring();
 
-            break;
+        break;
+    case STATE_MENU:
 
-        case STATE_MANUAL_WEIGHT:
+        handleMenu(event);
 
-            handleManualWeight(event);
+        break;
 
-            break;
+    case STATE_MANUAL_TEMP:
 
-        case STATE_READY:
+        handleManualTemperature(event);
 
-            handleReady(event);
+        break;
 
-            break;
+    case STATE_MANUAL_WEIGHT:
 
-        case STATE_RUNNING:
+        handleManualWeight(event);
 
-            handleRunning(event);
+        break;
 
-            updateWeightControl();
+    case STATE_READY:
 
-            break;
+        handleReady(event);
 
-        case STATE_PAUSED:
+        break;
 
-            handlePaused(event);
+    case STATE_RUNNING:
 
-            break;
+        handleRunning(event);
 
-        case STATE_FINISHED:
+        updateWeightControl();
 
-            handleFinished(event);
+        break;
 
-            break;
+    case STATE_PAUSED:
 
-        case STATE_ERROR:
+        handlePaused(event);
 
-            handleError(event);
+        break;
 
-            break;
+    case STATE_FINISHED:
+
+        handleFinished(event);
+
+        break;
+
+    case STATE_ERROR:
+
+        handleError(event);
+
+        break;
     }
 
     // =================================================
@@ -433,8 +458,7 @@ void Application::update()
     if (millis() - lastHeartbeat >= 5000)
     {
         Serial.println(
-            "[Application] System alive"
-        );
+            "[Application] System alive");
 
         lastHeartbeat = millis();
     }
@@ -506,9 +530,7 @@ void Application::updateTemperatureControl()
     {
         buzzer.warning();
         Serial.println(
-            "[CONTROL] Invalid chamber temperature"
-        );
-
+            "[CONTROL] Invalid chamber temperature");
 
         return;
     }
@@ -531,22 +553,18 @@ void Application::updateTemperatureControl()
 
             Serial.println();
             Serial.println(
-                "[CONTROL] Target temperature reached"
-            );
+                "[CONTROL] Target temperature reached");
 
             Serial.print(
-                "[CONTROL] Chamber: "
-            );
+                "[CONTROL] Chamber: ");
 
             Serial.print(
-                chamberTemperature
-            );
+                chamberTemperature);
 
             Serial.println(" C");
 
             Serial.println(
-                "[CONTROL] Starting 20 second hold"
-            );
+                "[CONTROL] Starting 20 second hold");
         }
 
         /*
@@ -571,8 +589,7 @@ void Application::updateTemperatureControl()
         targetReachedStartTime = 0;
 
         Serial.println(
-            "[CONTROL] Temperature dropped below target"
-        );
+            "[CONTROL] Temperature dropped below target");
     }
 
     float difference =
@@ -582,8 +599,7 @@ void Application::updateTemperatureControl()
     uint8_t desiredPower =
         calculateHeaterPower(
             chamberTemperature,
-            targetTemperature
-        );
+            targetTemperature);
 
     targetSoftwarePower =
         desiredPower;
@@ -609,8 +625,7 @@ void Application::updateTemperatureControl()
 
 uint8_t Application::calculateHeaterPower(
     float currentTemperature,
-    float targetTemperature
-)
+    float targetTemperature)
 {
     float difference =
         targetTemperature -
@@ -685,8 +700,7 @@ void Application::updateSCRControl()
     // =================================================
 
     scr.moveOneStepToward(
-        targetSoftwarePower
-    );
+        targetSoftwarePower);
 }
 
 // =====================================================
@@ -700,8 +714,7 @@ void Application::startSCRReset()
     }
 
     Serial.println(
-        "[SCR] Starting non-blocking reset to 0%"
-    );
+        "[SCR] Starting non-blocking reset to 0%");
 
     scrResetInProgress = true;
     scrResetStepsRemaining = 100;
@@ -745,12 +758,10 @@ void Application::updateSCRReset()
         scrResetStepsRemaining--;
 
         Serial.print(
-            "[SCR RESET] Pulse sent | Remaining: "
-        );
+            "[SCR RESET] Pulse sent | Remaining: ");
 
         Serial.println(
-            scrResetStepsRemaining
-        );
+            scrResetStepsRemaining);
     }
 
     // -------------------------------------------------
@@ -764,8 +775,7 @@ void Application::updateSCRReset()
         targetSoftwarePower = 0;
 
         Serial.println(
-            "[SCR RESET] Physical SCR = 0%"
-        );
+            "[SCR RESET] Physical SCR = 0%");
     }
 }
 // =====================================================
@@ -811,10 +821,9 @@ void Application::checkTargetTemperatureHold()
 // =====================================================
 
 void Application::handleMenu(
-    EncoderEvent event
-)
+    EncoderEvent event)
 {
-    Menu* menu =
+    Menu *menu =
         menuManager.currentMenu();
 
     if (menu == nullptr)
@@ -847,8 +856,7 @@ void Application::handleMenu(
 
         handleMenuAction(
             action,
-            parameter
-        );
+            parameter);
     }
 }
 
@@ -858,105 +866,103 @@ void Application::handleMenu(
 
 void Application::handleMenuAction(
     MenuAction action,
-    uint8_t parameter
-)
+    uint8_t parameter)
 {
     switch (action)
     {
-        case ACTION_OPEN_RECIPES:
-        {
-            settings.autoMode = true;
+    case ACTION_OPEN_RECIPES:
+    {
+        settings.autoMode = true;
 
-            menuManager.openRecipes();
+        menuManager.openRecipes();
 
-            state = STATE_MENU;
+        state = STATE_MENU;
 
-            drawCurrentMenu();
+        drawCurrentMenu();
 
-            break;
-        }
+        break;
+    }
 
-        case ACTION_OPEN_MANUAL:
-        {
-            settings.autoMode = false;
+    case ACTION_OPEN_MANUAL:
+    {
+        settings.autoMode = false;
 
-            settings.temperature = 60;
+        settings.temperature = 60;
 
-            settings.targetWeight = 1000;
+        settings.targetWeight = 1000;
 
-            state = STATE_MANUAL_TEMP;
+        state = STATE_MANUAL_TEMP;
 
-            drawManualTemperature();
+        drawManualTemperature();
 
-            break;
-        }
+        break;
+    }
 
-        case ACTION_START_RECIPE:
-        {
-            settings.recipeID =
-                parameter;
+    case ACTION_START_RECIPE:
+    {
+        settings.recipeID =
+            parameter;
 
-            const Recipe& recipe =
-                RecipeDatabase::getRecipe(
-                    settings.recipeID
-                );
+        const Recipe &recipe =
+            RecipeDatabase::getRecipe(
+                settings.recipeID);
 
-            settings.temperature =
-                recipe.temperature;
+        settings.temperature =
+            recipe.temperature;
 
-            settings.autoMode = true;
+        settings.autoMode = true;
 
-            Serial.println();
-            Serial.println("==============================");
-            Serial.println(" RECIPE SELECTED");
-            Serial.println("==============================");
+        Serial.println();
+        Serial.println("==============================");
+        Serial.println(" RECIPE SELECTED");
+        Serial.println("==============================");
 
-            Serial.print("Recipe: ");
-            Serial.println(recipe.name);
+        Serial.print("Recipe: ");
+        Serial.println(recipe.name);
 
-            Serial.print("Temperature: ");
-            Serial.print(recipe.temperature);
-            Serial.println(" C");
+        Serial.print("Temperature: ");
+        Serial.print(recipe.temperature);
+        Serial.println(" C");
 
-            Serial.print("Dry yield: ");
-            Serial.print(recipe.dryYieldPercent);
-            Serial.println("%");
+        Serial.print("Dry yield: ");
+        Serial.print(recipe.dryYieldPercent);
+        Serial.println("%");
 
-            Serial.println(
-                "Target weight will be calculated from starting weight.");
+        Serial.println(
+            "Target weight will be calculated from starting weight.");
 
-            state = STATE_READY;
+        state = STATE_READY;
 
-            drawReadyScreen();
+        drawReadyScreen();
 
-            break;
-        }
+        break;
+    }
 
-        case ACTION_CONFIRM_RECIPE:
-        {
-            state = STATE_READY;
+    case ACTION_CONFIRM_RECIPE:
+    {
+        state = STATE_READY;
 
-            drawReadyScreen();
+        drawReadyScreen();
 
-            break;
-        }
+        break;
+    }
 
-        case ACTION_CANCEL_RECIPE:
-        {
-            menuManager.openRecipes();
+    case ACTION_CANCEL_RECIPE:
+    {
+        menuManager.openRecipes();
 
-            state = STATE_MENU;
+        state = STATE_MENU;
 
-            drawCurrentMenu();
+        drawCurrentMenu();
 
-            break;
-        }
+        break;
+    }
 
-        case ACTION_NONE:
-        default:
-        {
-            break;
-        }
+    case ACTION_NONE:
+    default:
+    {
+        break;
+    }
     }
 }
 
@@ -966,7 +972,7 @@ void Application::handleMenuAction(
 
 void Application::drawCurrentMenu()
 {
-    Menu* menu =
+    Menu *menu =
         menuManager.currentMenu();
 
     if (menu == nullptr)
@@ -977,9 +983,7 @@ void Application::drawCurrentMenu()
     display.drawMenu(
         menu->getTitle(),
         menu->getItem(
-            menu->getSelectedIndex()
-        )
-    );
+            menu->getSelectedIndex()));
 }
 
 // =====================================================
@@ -987,8 +991,7 @@ void Application::drawCurrentMenu()
 // =====================================================
 
 void Application::handleManualTemperature(
-    EncoderEvent event
-)
+    EncoderEvent event)
 {
     if (event == ENCODER_RIGHT)
     {
@@ -1041,21 +1044,18 @@ void Application::drawManualTemperature()
     display.print(
         0,
         0,
-        "Set Temperature"
-    );
+        "Set Temperature");
 
     snprintf(
         line,
         sizeof(line),
         "%3u C  < >",
-        settings.temperature
-    );
+        settings.temperature);
 
     display.print(
         0,
         1,
-        line
-    );
+        line);
 }
 
 // =====================================================
@@ -1063,8 +1063,7 @@ void Application::drawManualTemperature()
 // =====================================================
 
 void Application::handleManualWeight(
-    EncoderEvent event
-)
+    EncoderEvent event)
 {
     if (event == ENCODER_RIGHT)
     {
@@ -1115,29 +1114,25 @@ void Application::drawManualWeight()
     display.print(
         0,
         0,
-        "Target Weight"
-    );
+        "Target Weight");
 
     snprintf(
         line,
         sizeof(line),
         "%4u g  < >",
-        settings.targetWeight
-    );
+        settings.targetWeight);
 
     display.print(
         0,
         1,
-        line
-    );
+        line);
 }
 
 // =====================================================
 // READY
 // =====================================================
 void Application::handleReady(
-    EncoderEvent event
-)
+    EncoderEvent event)
 {
     // =================================================
     // START DRYING
@@ -1152,8 +1147,7 @@ void Application::handleReady(
         if (scrResetInProgress)
         {
             Serial.println(
-                "[READY] Waiting for SCR reset..."
-            );
+                "[READY] Waiting for SCR reset...");
 
             return;
         }
@@ -1161,8 +1155,7 @@ void Application::handleReady(
         if (!weightSensor.isReady())
         {
             Serial.println(
-                "[READY] ERROR: Weight sensor not ready"
-            );
+                "[READY] ERROR: Weight sensor not ready");
 
             state = STATE_ERROR;
             drawErrorScreen();
@@ -1173,8 +1166,7 @@ void Application::handleReady(
         if (weightSensor.isTaring())
         {
             Serial.println(
-                "[READY] Waiting for weight sensor tare..."
-            );
+                "[READY] Waiting for weight sensor tare...");
 
             return;
         }
@@ -1188,8 +1180,7 @@ void Application::handleReady(
         if (startingWeight <= 0.0f)
         {
             Serial.println(
-                "[READY] ERROR: Invalid starting weight"
-            );
+                "[READY] ERROR: Invalid starting weight");
 
             state = STATE_ERROR;
             drawErrorScreen();
@@ -1207,10 +1198,9 @@ void Application::handleReady(
             // AUTO MODE
             // -------------------------------------------------
 
-            const Recipe& recipe =
+            const Recipe &recipe =
                 RecipeDatabase::getRecipe(
-                    settings.recipeID
-                );
+                    settings.recipeID);
 
             // -------------------------------------------------
             // Validate recipe percentage
@@ -1220,16 +1210,13 @@ void Application::handleReady(
                 recipe.dryYieldPercent >= 100)
             {
                 Serial.println(
-                    "[READY] ERROR: Invalid recipe dry yield"
-                );
+                    "[READY] ERROR: Invalid recipe dry yield");
 
                 Serial.print(
-                    "[READY] Yield: "
-                );
+                    "[READY] Yield: ");
 
                 Serial.print(
-                    recipe.dryYieldPercent
-                );
+                    recipe.dryYieldPercent);
 
                 Serial.println("%");
 
@@ -1245,10 +1232,7 @@ void Application::handleReady(
 
             targetWeight =
                 startingWeight *
-                (
-                    (float)recipe.dryYieldPercent
-                    / 100.0f
-                );
+                ((float)recipe.dryYieldPercent / 100.0f);
 
             // -------------------------------------------------
             // Diagnostics
@@ -1256,62 +1240,48 @@ void Application::handleReady(
 
             Serial.println();
             Serial.println(
-                "=============================="
-            );
+                "==============================");
 
             Serial.println(
-                "[AUTO] TARGET CALCULATION"
-            );
+                "[AUTO] TARGET CALCULATION");
 
             Serial.println(
-                "=============================="
-            );
+                "==============================");
 
             Serial.print(
-                "[AUTO] Recipe: "
-            );
+                "[AUTO] Recipe: ");
 
             Serial.println(
-                recipe.name
-            );
+                recipe.name);
 
             Serial.print(
-                "[AUTO] Starting weight: "
-            );
+                "[AUTO] Starting weight: ");
 
             Serial.print(
                 startingWeight,
-                2
-            );
+                2);
 
             Serial.println(
-                " g"
-            );
+                " g");
 
             Serial.print(
-                "[AUTO] Dry yield: "
-            );
+                "[AUTO] Dry yield: ");
 
             Serial.print(
-                recipe.dryYieldPercent
-            );
+                recipe.dryYieldPercent);
 
             Serial.println(
-                "%"
-            );
+                "%");
 
             Serial.print(
-                "[AUTO] Target weight: "
-            );
+                "[AUTO] Target weight: ");
 
             Serial.print(
                 targetWeight,
-                2
-            );
+                2);
 
             Serial.println(
-                " g"
-            );
+                " g");
         }
 
         // =================================================
@@ -1326,8 +1296,7 @@ void Application::handleReady(
             if (targetWeight <= 0.0f)
             {
                 Serial.println(
-                    "[READY] ERROR: Invalid target weight"
-                );
+                    "[READY] ERROR: Invalid target weight");
 
                 state = STATE_ERROR;
                 drawErrorScreen();
@@ -1338,30 +1307,24 @@ void Application::handleReady(
             Serial.println();
 
             Serial.print(
-                "[MANUAL] Starting weight: "
-            );
+                "[MANUAL] Starting weight: ");
 
             Serial.print(
                 startingWeight,
-                2
-            );
+                2);
 
             Serial.println(
-                " g"
-            );
+                " g");
 
             Serial.print(
-                "[MANUAL] Target weight: "
-            );
+                "[MANUAL] Target weight: ");
 
             Serial.print(
                 targetWeight,
-                2
-            );
+                2);
 
             Serial.println(
-                " g"
-            );
+                " g");
         }
 
         // =================================================
@@ -1372,38 +1335,30 @@ void Application::handleReady(
         {
             Serial.println();
             Serial.println(
-                "[READY] ERROR: Target weight must be"
-            );
+                "[READY] ERROR: Target weight must be");
 
             Serial.println(
-                "[READY] lower than starting weight"
-            );
+                "[READY] lower than starting weight");
 
             Serial.print(
-                "[READY] Starting: "
-            );
+                "[READY] Starting: ");
 
             Serial.print(
                 startingWeight,
-                2
-            );
+                2);
 
             Serial.println(
-                " g"
-            );
+                " g");
 
             Serial.print(
-                "[READY] Target: "
-            );
+                "[READY] Target: ");
 
             Serial.print(
                 targetWeight,
-                2
-            );
+                2);
 
             Serial.println(
-                " g"
-            );
+                " g");
 
             state = STATE_ERROR;
             drawErrorScreen();
@@ -1417,54 +1372,42 @@ void Application::handleReady(
 
         Serial.println();
         Serial.println(
-            "=============================="
-        );
+            "==============================");
 
         Serial.println(
-            " STARTING DRYING"
-        );
+            " STARTING DRYING");
 
         Serial.println(
-            "=============================="
-        );
+            "==============================");
 
         Serial.print(
-            "Temperature: "
-        );
+            "Temperature: ");
 
         Serial.print(
-            settings.temperature
-        );
+            settings.temperature);
 
         Serial.println(
-            " C"
-        );
+            " C");
 
         Serial.print(
-            "Starting weight: "
-        );
+            "Starting weight: ");
 
         Serial.print(
             startingWeight,
-            2
-        );
+            2);
 
         Serial.println(
-            " g"
-        );
+            " g");
 
         Serial.print(
-            "Target weight: "
-        );
+            "Target weight: ");
 
         Serial.print(
             targetWeight,
-            2
-        );
+            2);
 
         Serial.println(
-            " g"
-        );
+            " g");
 
         // =================================================
         // RECIPE / MODE
@@ -1472,42 +1415,34 @@ void Application::handleReady(
 
         if (settings.autoMode)
         {
-            const Recipe& recipe =
+            const Recipe &recipe =
                 RecipeDatabase::getRecipe(
-                    settings.recipeID
-                );
+                    settings.recipeID);
 
             Serial.print(
-                "Mode: AUTO"
-            );
+                "Mode: AUTO");
 
             Serial.println();
 
             Serial.print(
-                "Recipe: "
-            );
+                "Recipe: ");
 
             Serial.println(
-                recipe.name
-            );
+                recipe.name);
 
             Serial.print(
-                "Dry yield: "
-            );
+                "Dry yield: ");
 
             Serial.print(
-                recipe.dryYieldPercent
-            );
+                recipe.dryYieldPercent);
 
             Serial.println(
-                "%"
-            );
+                "%");
         }
         else
         {
             Serial.println(
-                "Mode: MANUAL"
-            );
+                "Mode: MANUAL");
         }
 
         // =================================================
@@ -1515,8 +1450,7 @@ void Application::handleReady(
         // =================================================
 
         dryer.start(
-            settings.temperature
-        );
+            settings.temperature);
 
         heaterEnabled = true;
 
@@ -1535,6 +1469,10 @@ void Application::handleReady(
         weightTargetStartTime = 0;
 
         weightTargetReached = false;
+
+        startupTareScreenShown = false;
+
+        startupTareRequested = false;
 
         dryingStartTime =
             millis();
@@ -1583,10 +1521,9 @@ void Application::drawReadyScreen()
 
     if (settings.autoMode)
     {
-        const Recipe& recipe =
+        const Recipe &recipe =
             RecipeDatabase::getRecipe(
-                settings.recipeID
-            );
+                settings.recipeID);
 
         // -------------------------------------------------
         // Line 1
@@ -1597,22 +1534,19 @@ void Application::drawReadyScreen()
             sizeof(line),
             "%s %u%%",
             recipe.name,
-            recipe.dryYieldPercent
-        );
+            recipe.dryYieldPercent);
 
         display.print(
             0,
             0,
-            line
-        );
+            line);
     }
     else
     {
         display.print(
             0,
             0,
-            "Manual Ready"
-        );
+            "Manual Ready");
     }
 
     // -------------------------------------------------
@@ -1623,14 +1557,12 @@ void Application::drawReadyScreen()
         line,
         sizeof(line),
         "%uC Click=Start",
-        settings.temperature
-    );
+        settings.temperature);
 
     display.print(
         0,
         1,
-        line
-    );
+        line);
 }
 // =====================================================
 // RUNNING
@@ -1667,7 +1599,7 @@ void Application::handleRunning(EncoderEvent event)
     // LONG CLICK = FINISH
     // -------------------------------------------------
     // -------------------------------------------------
-    
+
     if (event == ENCODER_LONG_CLICK)
     {
         buzzer.beepShort();
@@ -1766,8 +1698,7 @@ void Application::drawRunningScreen()
             line1,
             sizeof(line1),
             "AVG: --.-C T:%3uC",
-            settings.temperature
-        );
+            settings.temperature);
     }
     else
     {
@@ -1777,16 +1708,14 @@ void Application::drawRunningScreen()
             average,
             4,
             1,
-            avgText
-        );
+            avgText);
 
         snprintf(
             line1,
             sizeof(line1),
             "AVG:%sC T:%3uC",
             avgText,
-            settings.temperature
-        );
+            settings.temperature);
     }
 
     // =================================================
@@ -1807,16 +1736,14 @@ void Application::drawRunningScreen()
         currentWeight,
         4,
         0,
-        weightText
-    );
+        weightText);
 
     snprintf(
         line2,
         sizeof(line2),
         "W:%sg >%4ug",
         weightText,
-        (unsigned int)targetWeight
-    );
+        (unsigned int)targetWeight);
 
     // =================================================
     // LCD
@@ -1825,33 +1752,28 @@ void Application::drawRunningScreen()
     display.print(
         0,
         0,
-        "                "
-    );
+        "                ");
 
     display.print(
         0,
         1,
-        "                "
-    );
+        "                ");
 
     display.print(
         0,
         0,
-        line1
-    );
+        line1);
 
     display.print(
         0,
         1,
-        line2
-    );
+        line2);
 }
 // =====================================================
 // PAUSED
 // =====================================================
 void Application::handlePaused(
-    EncoderEvent event
-)
+    EncoderEvent event)
 {
     // =================================================
     // RESUME REQUEST
@@ -1860,8 +1782,7 @@ void Application::handlePaused(
     if (event == ENCODER_CLICK)
     {
         Serial.println(
-            "[PAUSED] Resume requested"
-        );
+            "[PAUSED] Resume requested");
 
         /*
          * If SCR is still physically resetting,
@@ -1874,8 +1795,7 @@ void Application::handlePaused(
             pauseResumePending = true;
 
             Serial.println(
-                "[PAUSED] Resume queued - waiting for SCR reset"
-            );
+                "[PAUSED] Resume queued - waiting for SCR reset");
 
             return;
         }
@@ -1889,12 +1809,10 @@ void Application::handlePaused(
         buzzer.beepShort();
 
         Serial.println(
-            "[PAUSED] SCR reset complete - resuming dryer"
-        );
+            "[PAUSED] SCR reset complete - resuming dryer");
 
         dryer.start(
-            settings.temperature
-        );
+            settings.temperature);
 
         heaterEnabled = true;
 
@@ -1925,8 +1843,7 @@ void Application::handlePaused(
     else if (event == ENCODER_LONG_CLICK)
     {
         Serial.println(
-            "[PAUSED] Drying cancelled"
-        );
+            "[PAUSED] Drying cancelled");
 
         pauseResumePending = false;
 
@@ -1968,12 +1885,10 @@ void Application::handlePaused(
         buzzer.beepShort();
 
         Serial.println(
-            "[PAUSED] Queued resume executed"
-        );
+            "[PAUSED] Queued resume executed");
 
         dryer.start(
-            settings.temperature
-        );
+            settings.temperature);
 
         heaterEnabled = true;
 
@@ -2000,22 +1915,19 @@ void Application::drawPausedScreen()
     display.print(
         0,
         0,
-        "DRYER PAUSED"
-    );
+        "DRYER PAUSED");
 
     display.print(
         0,
         1,
-        "Click=Resume"
-    );
+        "Click=Resume");
 }
 
 // =====================================================
 // FINISHED
 // =====================================================
 void Application::handleFinished(
-    EncoderEvent event
-)
+    EncoderEvent event)
 {
     // =================================================
     // KEEP SCR TARGET AT ZERO
@@ -2044,8 +1956,7 @@ void Application::handleFinished(
         buzzer.beepShort();
 
         Serial.println(
-            "[FINISHED] Returning to main menu"
-        );
+            "[FINISHED] Returning to main menu");
 
         /*
          * IMPORTANT:
@@ -2086,22 +1997,19 @@ void Application::drawFinishedScreen()
     display.print(
         0,
         0,
-        "Drying Finished"
-    );
+        "Drying Finished");
 
     display.print(
         0,
         1,
-        "Click = Menu"
-    );
+        "Click = Menu");
 }
 
 // =====================================================
 // ERROR
 // =====================================================
 void Application::handleError(
-    EncoderEvent event
-)
+    EncoderEvent event)
 {
     // =================================================
     // FORCE DRYER OFF
@@ -2161,14 +2069,12 @@ void Application::drawErrorScreen()
     display.print(
         0,
         0,
-        getErrorText()
-    );
+        getErrorText());
 
     display.print(
         0,
         1,
-        "Click = Menu"
-    );
+        "Click = Menu");
 }
 // =========================================================
 // WEIGHT CONTROL
@@ -2221,8 +2127,7 @@ void Application::captureStartingWeight()
     if (!weightSensor.isReady())
     {
         Serial.println(
-            "[WEIGHT] Cannot capture starting weight"
-        );
+            "[WEIGHT] Cannot capture starting weight");
 
         return;
     }
@@ -2238,17 +2143,14 @@ void Application::captureStartingWeight()
     weightTargetReached = false;
 
     Serial.print(
-        "[WEIGHT] Starting weight: "
-    );
+        "[WEIGHT] Starting weight: ");
 
     Serial.print(
         startingWeight,
-        2
-    );
+        2);
 
     Serial.println(
-        " g"
-    );
+        " g");
 }
 // =====================================================
 // TARGET WEIGHT CHECK
@@ -2329,8 +2231,7 @@ void Application::checkTargetWeight()
         if (weightTargetStartTime != 0)
         {
             Serial.println(
-                "[WEIGHT] Target no longer reached"
-            );
+                "[WEIGHT] Target no longer reached");
         }
 
         weightTargetStartTime = 0;
@@ -2360,25 +2261,20 @@ void Application::checkTargetWeight()
 
             Serial.println();
             Serial.println(
-                "[WEIGHT] Target weight reached"
-            );
+                "[WEIGHT] Target weight reached");
 
             Serial.print(
-                "[WEIGHT] Current: "
-            );
+                "[WEIGHT] Current: ");
 
             Serial.print(
                 currentWeight,
-                2
-            );
+                2);
 
             Serial.println(
-                " g"
-            );
+                " g");
 
             Serial.println(
-                "[WEIGHT] Waiting for stable weight..."
-            );
+                "[WEIGHT] Waiting for stable weight...");
         }
 
         // -------------------------------------------------
@@ -2398,8 +2294,7 @@ void Application::checkTargetWeight()
                 false;
 
             Serial.println(
-                "[WEIGHT] Target reached but weight is NOT stable"
-            );
+                "[WEIGHT] Target reached but weight is NOT stable");
 
             return;
         }
@@ -2409,62 +2304,51 @@ void Application::checkTargetWeight()
         // =================================================
 
         if (millis() -
-            weightTargetStartTime >= 5000UL)
+                weightTargetStartTime >=
+            5000UL)
         {
             weightTargetReached =
                 true;
 
             Serial.println();
             Serial.println(
-                "=============================="
-            );
+                "==============================");
 
             Serial.println(
-                "[WEIGHT] TARGET WEIGHT CONFIRMED"
-            );
+                "[WEIGHT] TARGET WEIGHT CONFIRMED");
 
             Serial.println(
-                "=============================="
-            );
+                "==============================");
 
             Serial.print(
-                "[WEIGHT] Starting: "
-            );
+                "[WEIGHT] Starting: ");
 
             Serial.print(
                 startingWeight,
-                2
-            );
+                2);
 
             Serial.println(
-                " g"
-            );
+                " g");
 
             Serial.print(
-                "[WEIGHT] Target: "
-            );
+                "[WEIGHT] Target: ");
 
             Serial.print(
                 targetWeight,
-                2
-            );
+                2);
 
             Serial.println(
-                " g"
-            );
+                " g");
 
             Serial.print(
-                "[WEIGHT] Final: "
-            );
+                "[WEIGHT] Final: ");
 
             Serial.print(
                 currentWeight,
-                2
-            );
+                2);
 
             Serial.println(
-                " g"
-            );
+                " g");
 
             // -------------------------------------------------
             // Finish drying
@@ -2482,16 +2366,13 @@ void Application::finishDrying()
 {
     Serial.println();
     Serial.println(
-        "================================"
-    );
+        "================================");
 
     Serial.println(
-        "[DRYING] TARGET WEIGHT REACHED"
-    );
+        "[DRYING] TARGET WEIGHT REACHED");
 
     Serial.println(
-        "================================"
-    );
+        "================================");
 
     // -------------------------------------------------
     // Disable heater
@@ -2515,51 +2396,42 @@ void Application::finishDrying()
         weightSensor.getWeight();
 
     Serial.print(
-        "[DRYING] Starting weight: "
-    );
+        "[DRYING] Starting weight: ");
 
     Serial.print(
         startingWeight,
-        2
-    );
+        2);
 
     Serial.println(
-        " g"
-    );
+        " g");
 
     Serial.print(
-        "[DRYING] Target weight: "
-    );
+        "[DRYING] Target weight: ");
 
     Serial.print(
         targetWeight,
-        2
-    );
+        2);
 
     Serial.println(
-        " g"
-    );
+        " g");
 
     Serial.print(
-        "[DRYING] Final weight: "
-    );
+        "[DRYING] Final weight: ");
 
     Serial.print(
         currentWeight,
-        2
-    );
+        2);
 
     Serial.println(
-        " g"
-    );
+        " g");
 
     // -------------------------------------------------
     // Change application state
     // -------------------------------------------------
 
     // -------------------------------------------------
-// Start post-drying cooling
-// -------------------------------------------------
+    // Start post-drying cooling
+    // -------------------------------------------------
 
     coolingAfterDrying = true;
     coolingComplete = false;
@@ -2590,8 +2462,7 @@ void Application::setCirculationFan(bool on)
     {
         digitalWrite(
             CIRCULATION_FAN_PIN,
-            HIGH
-        );
+            HIGH);
 
         circulationFanOn = true;
     }
@@ -2599,8 +2470,7 @@ void Application::setCirculationFan(bool on)
     {
         digitalWrite(
             CIRCULATION_FAN_PIN,
-            LOW
-        );
+            LOW);
 
         circulationFanOn = false;
     }
@@ -2624,14 +2494,11 @@ void Application::setCoolingFanPower(uint8_t power)
         0,
         100,
         0,
-        255
-    );
+        255);
 
     analogWrite(
         COOLING_FAN_PWM_PIN,
-        pwmValue
-    );
-
+        pwmValue);
 }
 // =========================================================
 // FAN CONTROL
@@ -2699,8 +2566,7 @@ void Application::updateFanControl()
         setCoolingFanPower(100);
 
         Serial.println(
-            "[FAN] CRITICAL TEMP -> COOLING FAN 100%"
-        );
+            "[FAN] CRITICAL TEMP -> COOLING FAN 100%");
 
         return;
     }
@@ -2751,9 +2617,7 @@ void Application::updateFanControl()
     }
 
     setCoolingFanPower(
-        newCoolingPower
-    );
-    
+        newCoolingPower);
 }
 // =====================================================
 // POST-DRYING COOLING
@@ -2835,30 +2699,163 @@ void Application::updatePostDryingCooling()
     drawFinishedScreen();
 }
 
-const char* Application::getErrorText() const
+const char *Application::getErrorText() const
 {
     switch (error)
     {
-        case ERROR_TEMP_SENSOR:
-            return "TEMP SENSOR";
+    case ERROR_TEMP_SENSOR:
+        return "TEMP SENSOR";
 
-        case ERROR_OVER_TEMPERATURE:
-            return "OVER TEMP";
+    case ERROR_OVER_TEMPERATURE:
+        return "OVER TEMP";
 
-        case ERROR_WEIGHT_SENSOR:
-            return "WEIGHT SENSOR";
+    case ERROR_WEIGHT_SENSOR:
+        return "WEIGHT SENSOR";
 
-        case ERROR_INVALID_TARGET_WEIGHT:
-            return "BAD TARGET";
+    case ERROR_INVALID_TARGET_WEIGHT:
+        return "BAD TARGET";
 
-        case ERROR_INVALID_STARTING_WEIGHT:
-            return "BAD START WT";
+    case ERROR_INVALID_STARTING_WEIGHT:
+        return "BAD START WT";
 
-        case ERROR_TARGET_WEIGHT_INVALID:
-            return "BAD WEIGHT";
+    case ERROR_TARGET_WEIGHT_INVALID:
+        return "BAD WEIGHT";
 
-        case ERROR_NONE:
-        default:
-            return "SYSTEM ERROR";
+    case ERROR_NONE:
+    default:
+        return "SYSTEM ERROR";
     }
+}
+void Application::drawTareConfirmScreen()
+{
+    display.clear();
+
+    display.center(
+        0,
+        "REMOVE ALL FOOD");
+
+    display.center(
+        1,
+        "PRESS CLICK TARE");
+}
+
+void Application::handleTareConfirm(
+    EncoderEvent event)
+{
+    // Wait until HX711 initialization is complete
+    if (!weightSensor.isReady())
+    {
+        if (!startupTareScreenShown)
+        {
+            display.clear();
+
+            display.center(
+                0,
+                "LOAD CELL");
+
+            display.center(
+                1,
+                "INITIALIZING");
+        }
+
+        return;
+    }
+
+    // Show the tare instruction only once
+    if (!startupTareScreenShown)
+    {
+        startupTareScreenShown = true;
+
+        drawTareConfirmScreen();
+
+        buzzer.beepShort();
+
+        Serial.println(
+            "[TARE] Remove all food and press click");
+    }
+
+    // Wait for encoder click
+    if (event != ENCODER_CLICK)
+    {
+        return;
+    }
+
+    Serial.println(
+        "[TARE] User requested tare");
+
+    buzzer.beepShort();
+
+    drawTaringScreen();
+
+    state = STATE_TARING;
+
+    weightSensor.tare();
+}
+
+void Application::drawTaringScreen()
+{
+    display.clear();
+
+    display.center(
+        0,
+        "TARING...");
+
+    display.center(
+        1,
+        "PLEASE WAIT");
+}
+void Application::handleTaring()
+{
+    // Tare still running
+    if (weightSensor.isTaring())
+    {
+        return;
+    }
+
+    // Sensor failed
+    if (!weightSensor.isReady())
+    {
+        Serial.println(
+            "[TARE] Weight sensor error");
+
+        error = ERROR_WEIGHT_SENSOR;
+
+        buzzer.error();
+
+        state = STATE_ERROR;
+
+        drawErrorScreen();
+
+        return;
+    }
+
+    // Tare completed
+    currentWeight =
+        weightSensor.getWeight();
+
+    Serial.println(
+        "[TARE] User tare complete");
+
+    Serial.print(
+        "[TARE] Zero weight: ");
+
+    Serial.print(
+        currentWeight,
+        2);
+
+    Serial.println(
+        " g");
+
+    // Two short success beeps
+    buzzer.success();
+
+    // Open main menu
+    menuManager.openMain();
+
+    state = STATE_MENU;
+
+    drawCurrentMenu();
+
+    Serial.println(
+        "[TARE] Main menu opened");
 }

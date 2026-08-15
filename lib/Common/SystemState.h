@@ -3,7 +3,8 @@
 
 enum SystemState
 {
-    STATE_MENU = 0,
+    STATE_STARTUP_TARE,
+    STATE_MENU ,
 
     STATE_MANUAL_TEMP,
 
