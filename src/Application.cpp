@@ -37,6 +37,7 @@ Application::Application()
       settings(),
 
       state(STATE_MENU),
+      error(ERROR_NONE),
       weightSensor(
           HX711_DOUT,
           HX711_SCK),
@@ -487,6 +488,8 @@ void Application::updateTemperatureControl()
 
         startSCRReset();
 
+        error = ERROR_OVER_TEMPERATURE;
+
         state = STATE_ERROR;
 
         drawErrorScreen();
@@ -739,7 +742,7 @@ void Application::updateSCRReset()
     // Wait between physical reset pulses
     // -------------------------------------------------
 
-    if (millis() - lastSCRPulse < 300)
+    if (millis() - lastSCRPulse < 150)
     {
         return;
     }
@@ -1170,10 +1173,14 @@ void Application::handleReady(
         if (!weightSensor.isReady())
         {
             Serial.println(
-                "[READY] ERROR: Weight sensor not ready"
-            );
+                "[READY] ERROR: Weight sensor not ready");
+
+            buzzer.error();
+
+            error = ERROR_WEIGHT_SENSOR;
 
             state = STATE_ERROR;
+
             drawErrorScreen();
 
             return;
@@ -1198,10 +1205,14 @@ void Application::handleReady(
         if (targetWeight <= 0.0f)
         {
             Serial.println(
-                "[READY] ERROR: Invalid target weight"
-            );
+                "[READY] ERROR: Invalid target weight");
+
+            buzzer.error();
+
+            error = ERROR_INVALID_TARGET_WEIGHT;
 
             state = STATE_ERROR;
+
             drawErrorScreen();
 
             return;
@@ -1220,10 +1231,14 @@ void Application::handleReady(
         if (startingWeight <= 0.0f)
         {
             Serial.println(
-                "[READY] ERROR: Invalid starting weight"
-            );
+                "[READY] ERROR: Invalid starting weight");
+
+            buzzer.error();
+
+            error = ERROR_INVALID_STARTING_WEIGHT;
 
             state = STATE_ERROR;
+
             drawErrorScreen();
 
             return;
@@ -1237,35 +1252,32 @@ void Application::handleReady(
         {
             Serial.println();
             Serial.println(
-                "[READY] ERROR: Target weight must be"
-            );
-            Serial.println(
-                "[READY] lower than starting weight"
-            );
+                "[READY] ERROR: Target weight must be lower than starting weight");
 
             Serial.print(
-                "[READY] Starting: "
-            );
+                "[READY] Starting: ");
 
             Serial.print(
                 startingWeight,
-                2
-            );
+                2);
 
             Serial.println(" g");
 
             Serial.print(
-                "[READY] Target: "
-            );
+                "[READY] Target: ");
 
             Serial.print(
                 targetWeight,
-                2
-            );
+                2);
 
             Serial.println(" g");
 
+            buzzer.error();
+
+            error = ERROR_TARGET_WEIGHT_INVALID;
+
             state = STATE_ERROR;
+
             drawErrorScreen();
 
             return;
@@ -1478,29 +1490,39 @@ void Application::handleRunning(EncoderEvent event)
     // -------------------------------------------------
     // LONG CLICK = FINISH
     // -------------------------------------------------
+    // -------------------------------------------------
+    
     if (event == ENCODER_LONG_CLICK)
     {
-        Serial.println("[RUNNING] Finish requested");
+        buzzer.beepShort();
+
+        Serial.println(
+            "[RUNNING] Finish requested");
+
+        // -------------------------------------------------
+        // STOP DRYER / HEATER
+        // -------------------------------------------------
 
         dryer.stop();
 
         heaterEnabled = false;
 
-        // Force heater power request to zero.
+        // -------------------------------------------------
+        // REQUEST SCR = 0%
+        // -------------------------------------------------
+
         targetSoftwarePower = 0;
 
-        // Physically reset SCR toward zero.
         startSCRReset();
 
         // -------------------------------------------------
-        // Start post-drying cooling
+        // START POST-DRYING COOLING
         // -------------------------------------------------
 
         coolingAfterDrying = true;
         coolingComplete = false;
 
         setCirculationFan(false);
-
         setCoolingFanPower(100);
 
         Serial.println(
@@ -1513,6 +1535,16 @@ void Application::handleRunning(EncoderEvent event)
             COOLING_FINISH_TEMP);
 
         Serial.println(" C");
+
+        // -------------------------------------------------
+        // IMPORTANT:
+        // Enter FINISHED state immediately.
+        // Do NOT wait for SCR reset.
+        // -------------------------------------------------
+
+        state = STATE_FINISHED;
+
+        finishScreenShown = false;
 
         drawFinishedScreen();
 
@@ -1744,8 +1776,15 @@ void Application::handleFinished(
     EncoderEvent event
 )
 {
-    // Always request SCR = 0%.
+    // =================================================
+    // KEEP SCR TARGET AT ZERO
+    // =================================================
+
     targetSoftwarePower = 0;
+
+    // =================================================
+    // FINISHED SCREEN
+    // =================================================
 
     if (!finishScreenShown)
     {
@@ -1754,19 +1793,37 @@ void Application::handleFinished(
         finishScreenShown = true;
     }
 
+    // =================================================
+    // RETURN TO MENU
+    // =================================================
+
     if (event == ENCODER_CLICK ||
         event == ENCODER_LONG_CLICK)
     {
-        // Do not leave the finished state until
-        // the physical SCR has reached zero.
-        if (scrResetInProgress)
-        {
-            Serial.println(
-                "[FINISHED] Waiting for SCR shutdown..."
-            );
+        buzzer.beepShort();
 
-            return;
-        }
+        Serial.println(
+            "[FINISHED] Returning to main menu"
+        );
+
+        /*
+         * IMPORTANT:
+         *
+         * Do NOT wait for SCR reset here.
+         *
+         * SCR reset continues through:
+         *
+         * updateSCRControl()
+         *     -> updateSCRReset()
+         *
+         * in the background.
+         */
+
+        coolingAfterDrying = false;
+        coolingComplete = false;
+
+        setCirculationFan(false);
+        setCoolingFanPower(0);
 
         menuManager.openMain();
 
@@ -1798,9 +1855,6 @@ void Application::drawFinishedScreen()
     );
 }
 
-// =====================================================
-// ERROR
-// =====================================================
 // =====================================================
 // ERROR
 // =====================================================
@@ -1838,20 +1892,19 @@ void Application::handleError(
     if (event == ENCODER_CLICK ||
         event == ENCODER_LONG_CLICK)
     {
-        if (scrResetInProgress)
-        {
-            Serial.println(
-                "[ERROR] Waiting for SCR shutdown..."
-            );
-
-            return;
-        }
-
         buzzer.stop();
+
+        coolingAfterDrying = false;
+        coolingComplete = false;
+
+        setCirculationFan(false);
+        setCoolingFanPower(0);
 
         menuManager.openMain();
 
         state = STATE_MENU;
+
+        error = ERROR_NONE;
 
         drawCurrentMenu();
     }
@@ -1867,7 +1920,7 @@ void Application::drawErrorScreen()
     display.print(
         0,
         0,
-        "TEMP ERROR!"
+        getErrorText()
     );
 
     display.print(
@@ -2539,4 +2592,32 @@ void Application::updatePostDryingCooling()
     finishScreenShown = false;
 
     drawFinishedScreen();
+}
+
+const char* Application::getErrorText() const
+{
+    switch (error)
+    {
+        case ERROR_TEMP_SENSOR:
+            return "TEMP SENSOR";
+
+        case ERROR_OVER_TEMPERATURE:
+            return "OVER TEMP";
+
+        case ERROR_WEIGHT_SENSOR:
+            return "WEIGHT SENSOR";
+
+        case ERROR_INVALID_TARGET_WEIGHT:
+            return "BAD TARGET";
+
+        case ERROR_INVALID_STARTING_WEIGHT:
+            return "BAD START WT";
+
+        case ERROR_TARGET_WEIGHT_INVALID:
+            return "BAD WEIGHT";
+
+        case ERROR_NONE:
+        default:
+            return "SYSTEM ERROR";
+    }
 }

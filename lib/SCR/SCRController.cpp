@@ -43,13 +43,13 @@ void SCRController::pressButton(uint8_t pin)
     // Press
     digitalWrite(pin, LOW);
 
-    delay(120);
+    delay(60);
 
     // Release
     digitalWrite(pin, HIGH);
 
     // Give SCR time to register the physical press
-    delay(120);
+    delay(60);
 }
 
 // =====================================================

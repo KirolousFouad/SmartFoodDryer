@@ -41,6 +41,19 @@ enum ApplicationState
     STATE_ERROR
 };
 
+enum ApplicationError
+{
+    ERROR_NONE,
+
+    ERROR_TEMP_SENSOR,
+    ERROR_OVER_TEMPERATURE,
+    ERROR_WEIGHT_SENSOR,
+    ERROR_INVALID_TARGET_WEIGHT,
+    ERROR_INVALID_STARTING_WEIGHT,
+    ERROR_TARGET_WEIGHT_INVALID
+};
+
+
 // =====================================================
 // APPLICATION
 // =====================================================
@@ -83,6 +96,8 @@ private:
     // =================================================
 
     ApplicationState state;
+
+    ApplicationError error;
 
     WeightSensor weightSensor;
 
@@ -270,6 +285,7 @@ private:
 
     void setCoolingFanPower(uint8_t power);
     void updatePostDryingCooling();
+    const char* getErrorText() const;
 };
 
 #endif
