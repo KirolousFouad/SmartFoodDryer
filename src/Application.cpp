@@ -66,6 +66,7 @@ Application::Application()
 
       scrResetInProgress(false),
       scrResetStepsRemaining(0),
+      pauseResumePending(false),
       circulationFanOn(false),
       coolingFanPower(0),
       lastCoolingFanUpdate(0)
@@ -691,10 +692,6 @@ void Application::updateSCRControl()
 // =====================================================
 // START SCR RESET
 // =====================================================
-// =====================================================
-// START SCR RESET
-// =====================================================
-
 void Application::startSCRReset()
 {
     if (scrResetInProgress)
@@ -706,27 +703,15 @@ void Application::startSCRReset()
         "[SCR] Starting non-blocking reset to 0%"
     );
 
-    /*
-     * We do not know the actual physical SCR position.
-     *
-     * Therefore send 100 physical decrease pulses.
-     *
-     * The SCRController::resetStep() method always sends
-     * a physical decrease pulse, even when its software
-     * power is already 0%.
-     */
-
     scrResetInProgress = true;
-
     scrResetStepsRemaining = 100;
 
     targetSoftwarePower = 0;
 
+    pauseResumePending = false;
+
     lastSCRPulse = millis();
 }
-// =====================================================
-// UPDATE SCR RESET
-// =====================================================
 // =====================================================
 // UPDATE SCR RESET
 // =====================================================
@@ -1085,7 +1070,7 @@ void Application::handleManualWeight(
     {
         if (settings.targetWeight < 10000)
         {
-            settings.targetWeight += 100;
+            settings.targetWeight += 50;
         }
 
         drawManualWeight();
@@ -1093,9 +1078,9 @@ void Application::handleManualWeight(
 
     else if (event == ENCODER_LEFT)
     {
-        if (settings.targetWeight > 100)
+        if (settings.targetWeight > 50)
         {
-            settings.targetWeight -= 100;
+            settings.targetWeight -= 50;
         }
 
         drawManualWeight();
@@ -1869,38 +1854,58 @@ void Application::handlePaused(
 )
 {
     // =================================================
-    // RESUME
+    // RESUME REQUEST
     // =================================================
 
     if (event == ENCODER_CLICK)
     {
-        
         Serial.println(
             "[PAUSED] Resume requested"
         );
 
-        // Wait until the SCR has physically returned to zero.
+        /*
+         * If SCR is still physically resetting,
+         * remember the user's click.
+         *
+         * Do NOT discard the encoder event.
+         */
         if (scrResetInProgress)
         {
+            pauseResumePending = true;
+
             Serial.println(
-                "[PAUSED] Waiting for SCR reset..."
+                "[PAUSED] Resume queued - waiting for SCR reset"
             );
 
             return;
         }
+
+        // =================================================
+        // RESUME IMMEDIATELY
+        // =================================================
+
+        pauseResumePending = false;
+
         buzzer.beepShort();
 
-        // Restart dryer.
+        Serial.println(
+            "[PAUSED] SCR reset complete - resuming dryer"
+        );
+
         dryer.start(
             settings.temperature
         );
 
         heaterEnabled = true;
 
-        // Start from zero SCR power.
+        /*
+         * Start heater control from zero SCR power.
+         */
         targetSoftwarePower = 0;
 
-        // Re-enable temperature control from a clean state.
+        /*
+         * Restart temperature-control state.
+         */
         targetReached = false;
         targetReachedStartTime = 0;
 
@@ -1920,8 +1925,10 @@ void Application::handlePaused(
     else if (event == ENCODER_LONG_CLICK)
     {
         Serial.println(
-            "Drying cancelled."
+            "[PAUSED] Drying cancelled"
         );
+
+        pauseResumePending = false;
 
         dryer.stop();
 
@@ -1929,7 +1936,9 @@ void Application::handlePaused(
 
         targetSoftwarePower = 0;
 
-        // Reset SCR physically.
+        /*
+         * Continue SCR reset in the background.
+         */
         startSCRReset();
 
         menuManager.openMain();
@@ -1937,6 +1946,47 @@ void Application::handlePaused(
         state = STATE_MENU;
 
         drawCurrentMenu();
+
+        return;
+    }
+
+    // =================================================
+    // AUTOMATIC RESUME AFTER SCR RESET
+    // =================================================
+
+    /*
+     * A click may have been received while the SCR
+     * was resetting.
+     *
+     * Once the reset finishes, resume automatically.
+     */
+    if (pauseResumePending &&
+        !scrResetInProgress)
+    {
+        pauseResumePending = false;
+
+        buzzer.beepShort();
+
+        Serial.println(
+            "[PAUSED] Queued resume executed"
+        );
+
+        dryer.start(
+            settings.temperature
+        );
+
+        heaterEnabled = true;
+
+        targetSoftwarePower = 0;
+
+        targetReached = false;
+        targetReachedStartTime = 0;
+
+        state = STATE_RUNNING;
+
+        lastTemperatureControl = millis();
+
+        drawRunningScreen();
     }
 }
 // =====================================================
