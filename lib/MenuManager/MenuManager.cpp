@@ -1,5 +1,5 @@
 #include "MenuManager.h"
-
+#include "MenuAction.h"
 MenuManager::MenuManager()
 {
     current = &mainMenu;
@@ -22,7 +22,9 @@ void MenuManager::begin()
         "Manual",
         ACTION_OPEN_MANUAL
     );
-
+    mainMenu.addItem(
+        "Restart",
+        ACTION_RESTART_SYSTEM);
 
     // =========================
     // Recipe Menu
@@ -58,6 +60,11 @@ void MenuManager::begin()
         "Strawberry",
         ACTION_START_RECIPE,
         4
+    );
+    recipeMenu.addItem(
+        "Wael",
+        ACTION_START_RECIPE,
+        5
     );
 
 

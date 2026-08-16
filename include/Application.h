@@ -14,6 +14,7 @@
 #include "DryerSettings.h"
 #include "WeightSensor.h"
 #include "Buzzer.h"
+#include "MenuAction.h"
 
 // =====================================================
 // SAFETY
@@ -310,6 +311,7 @@ private:
 
     void drawStartupTare();
     void drawTaringScreen();
+    void returnToMainMenu();
 };
 
 #endif

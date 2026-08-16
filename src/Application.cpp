@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <math.h>
+#include <avr/wdt.h>
 
 // =====================================================
 // CONSTRUCTOR
@@ -721,7 +722,7 @@ void Application::startSCRReset()
 
     targetSoftwarePower = 0;
 
-    pauseResumePending = false;
+    //pauseResumePending = false;
 
     lastSCRPulse = millis();
 }
@@ -894,6 +895,44 @@ void Application::handleMenuAction(
         state = STATE_MANUAL_TEMP;
 
         drawManualTemperature();
+
+        break;
+    }
+    case ACTION_RESTART_SYSTEM:
+    {
+        Serial.println(
+            "[SYSTEM] Restart requested");
+
+        buzzer.beepShort();
+
+        dryer.stop();
+
+        heaterEnabled = false;
+
+        targetSoftwarePower = 0;
+
+        setCirculationFan(false);
+
+        setCoolingFanPower(0);
+
+        display.clear();
+
+        display.center(
+            0,
+            "Restarting...");
+
+        display.center(
+            1,
+            "Please wait");
+
+        delay(500);
+
+        wdt_enable(WDTO_15MS);
+
+        while (true)
+        {
+            // Wait for watchdog reset
+        }
 
         break;
     }
@@ -2858,4 +2897,82 @@ void Application::handleTaring()
 
     Serial.println(
         "[TARE] Main menu opened");
+}
+// =====================================================
+// RETURN TO MAIN MENU
+// =====================================================
+
+void Application::returnToMainMenu()
+{
+    Serial.println();
+    Serial.println("==============================");
+    Serial.println("[APPLICATION] Returning to menu");
+    Serial.println("==============================");
+
+    // -------------------------------------------------
+    // STOP DRYER
+    // -------------------------------------------------
+
+    dryer.stop();
+
+    // -------------------------------------------------
+    // HEATER OFF
+    // -------------------------------------------------
+
+    heaterEnabled = false;
+
+    // -------------------------------------------------
+    // REQUEST SCR = 0%
+// -------------------------------------------------
+
+    targetSoftwarePower = 0;
+
+    if (!scrResetInProgress &&
+        scr.getPower() > 0)
+    {
+        startSCRReset();
+    }
+
+    // -------------------------------------------------
+    // STOP COOLING
+    // -------------------------------------------------
+
+    coolingAfterDrying = false;
+    coolingComplete = false;
+
+    setCirculationFan(false);
+    setCoolingFanPower(0);
+
+    // -------------------------------------------------
+    // CLEAR PAUSE FLAGS
+    // -------------------------------------------------
+
+    pauseResumePending = false;
+
+    // -------------------------------------------------
+    // RESET DRYING FLAGS
+    // -------------------------------------------------
+
+    targetReached = false;
+    targetReachedStartTime = 0;
+
+    weightTargetReached = false;
+    weightTargetStartTime = 0;
+
+    finishScreenShown = false;
+
+    // -------------------------------------------------
+    // MAIN MENU
+    // -------------------------------------------------
+
+    menuManager.openMain();
+
+    state = STATE_MENU;
+
+    drawCurrentMenu();
+
+    buzzer.beepShort();
+
+    Serial.println(
+        "[APPLICATION] Main menu opened");
 }
